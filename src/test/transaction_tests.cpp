@@ -1,4 +1,4 @@
-// Copyright (c) 2011-2022 The Bitcoin Core developers
+// Copyright (c) 2011-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -12,6 +12,7 @@
 #include <consensus/tx_check.h>
 #include <consensus/validation.h>
 #include <core_io.h>
+#include <crypto/dilithium.h>
 #include <key.h>
 #include <policy/policy.h>
 #include <policy/settings.h>
@@ -810,8 +811,11 @@ BOOST_AUTO_TEST_CASE(test_IsStandard)
     CheckIsStandard(t);
 
     // Check dust with default relay fee:
-    CAmount nDustThreshold = 182 * g_dust.GetFeePerK() / 1000;
-    BOOST_CHECK_EQUAL(nDustThreshold, 546);
+    // QubitCoin: a P2PKH output is spent with a ~5.3 KB post-quantum Dilithium
+    // scriptSig, so its dust size is 34 (output) + 5311 (Dilithium input) = 5345
+    // bytes rather than the 182 bytes (34 + 148) of a legacy ECDSA P2PKH spend.
+    CAmount nDustThreshold = 5345 * g_dust.GetFeePerK() / 1000;
+    BOOST_CHECK_EQUAL(nDustThreshold, 16035);
     // dust:
     t.vout[0].nValue = nDustThreshold - 1;
     CheckIsNotStandard(t, "dust");
@@ -837,13 +841,13 @@ BOOST_AUTO_TEST_CASE(test_IsStandard)
     CheckIsStandard(t);
 
     // Check dust with odd relay fee to verify rounding:
-    // nDustThreshold = 182 * 3702 / 1000
+    // QubitCoin P2PKH dust size 5345 bytes: ceil(5345 * 3702 / 1000.0) = 19788
     g_dust = CFeeRate(3702);
     // dust:
-    t.vout[0].nValue = 674 - 1;
+    t.vout[0].nValue = 19788 - 1;
     CheckIsNotStandard(t, "dust");
     // not dust:
-    t.vout[0].nValue = 674;
+    t.vout[0].nValue = 19788;
     CheckIsStandard(t);
     g_dust = CFeeRate{DUST_RELAY_TX_FEE};
 
@@ -896,16 +900,54 @@ BOOST_AUTO_TEST_CASE(test_IsStandard)
     t.vout[1].scriptPubKey = CScript() << OP_RETURN;
     CheckIsNotStandard(t, "multi-op-return");
 
-    // Check large scriptSig (non-standard if size is >1650 bytes)
+    // Check large scriptSig (non-standard if size is > MAX_STANDARD_SCRIPTSIG_SIZE).
+    // QubitCoin: this limit was raised from Bitcoin's 1650 to 8000 so a ~5.3 KB
+    // post-quantum Dilithium P2PKH scriptSig relays as standard (see policy.h).
     t.vout.resize(1);
     t.vout[0].nValue = MAX_MONEY;
     t.vout[0].scriptPubKey = GetScriptForDestination(PKHash(key.GetPubKey()));
-    // OP_PUSHDATA2 with len (3 bytes) + data (1647 bytes) = 1650 bytes
-    t.vin[0].scriptSig = CScript() << std::vector<unsigned char>(1647, 0); // 1650
+    // OP_PUSHDATA2 with len (3 bytes) + data (7997 bytes) = 8000 bytes
+    t.vin[0].scriptSig = CScript() << std::vector<unsigned char>(7997, 0); // 8000
     CheckIsStandard(t);
 
-    t.vin[0].scriptSig = CScript() << std::vector<unsigned char>(1648, 0); // 1651
+    t.vin[0].scriptSig = CScript() << std::vector<unsigned char>(7998, 0); // 8001
     CheckIsNotStandard(t, "scriptsig-size");
+
+    // QubitCoin: relay bound on inputs that can demand a Dilithium verification.
+    // Standardness only — consensus still accepts larger consolidations. The bound
+    // is derived from MAX_STANDARD_TX_WEIGHT, so weight is what rejects a real
+    // spend shape; the count backstops shapes cheaper than a witness spend. See
+    // dilithium_size_tests for the full derivation.
+    {
+        // Cheapest input that carries an ML-DSA key: a bare 1952-byte witness item.
+        const std::vector<unsigned char> dil_key(dilithium::PUBLIC_KEY_SIZE, 0x02);
+
+        CMutableTransaction dil_ok;
+        dil_ok.version = 2;
+        dil_ok.vin.resize(MAX_STANDARD_DILITHIUM_INPUTS);
+        for (auto& in : dil_ok.vin) {
+            in.prevout.hash = Txid::FromUint256(uint256::ONE);
+            in.prevout.n = 0;
+            in.scriptWitness.stack = {dil_key};
+            in.nSequence = CTxIn::SEQUENCE_FINAL;
+        }
+        dil_ok.vout.resize(1);
+        dil_ok.vout[0].nValue = 1 * COIN;
+        dil_ok.vout[0].scriptPubKey = GetScriptForDestination(PKHash(key.GetPubKey()));
+        BOOST_CHECK_LT(GetTransactionWeight(CTransaction{dil_ok}), MAX_STANDARD_TX_WEIGHT);
+        CheckIsStandard(dil_ok);
+
+        CMutableTransaction dil_bad = dil_ok;
+        dil_bad.vin.resize(MAX_STANDARD_DILITHIUM_INPUTS + 1);
+        for (auto& in : dil_bad.vin) {
+            in.prevout.hash = Txid::FromUint256(uint256::ONE);
+            in.prevout.n = 0;
+            in.scriptWitness.stack = {dil_key};
+            in.nSequence = CTxIn::SEQUENCE_FINAL;
+        }
+        BOOST_CHECK_LT(GetTransactionWeight(CTransaction{dil_bad}), MAX_STANDARD_TX_WEIGHT);
+        CheckIsNotStandard(dil_bad, "too-many-dilithium-inputs");
+    }
 
     // Check scriptSig format (non-standard if there are any other ops than just PUSHs)
     t.vin[0].scriptSig = CScript()
@@ -983,10 +1025,11 @@ BOOST_AUTO_TEST_CASE(test_IsStandard)
     CheckIsNotStandard(t, "dust");
 
     // Check P2PKH outputs dust threshold
+    // QubitCoin: spent with a Dilithium key, so the threshold is 16035 sat, not 546.
     t.vout[0].scriptPubKey = CScript() << OP_DUP << OP_HASH160 << std::vector<unsigned char>(20, 0) << OP_EQUALVERIFY << OP_CHECKSIG;
-    t.vout[0].nValue = 546;
+    t.vout[0].nValue = 16035;
     CheckIsStandard(t);
-    t.vout[0].nValue = 545;
+    t.vout[0].nValue = 16034;
     CheckIsNotStandard(t, "dust");
 
     // Check P2SH outputs dust threshold
@@ -997,10 +1040,13 @@ BOOST_AUTO_TEST_CASE(test_IsStandard)
     CheckIsNotStandard(t, "dust");
 
     // Check P2WPKH outputs dust threshold
+    // QubitCoin: also spent with a Dilithium key, but in the witness where the
+    // signature and public key are discounted 4:1, so the threshold is 4170 sat
+    // (31 + 1359 vB) rather than 294 or the bare form's 16035.
     t.vout[0].scriptPubKey = CScript() << OP_0 << std::vector<unsigned char>(20, 0);
-    t.vout[0].nValue = 294;
+    t.vout[0].nValue = 4170;
     CheckIsStandard(t);
-    t.vout[0].nValue = 293;
+    t.vout[0].nValue = 4169;
     CheckIsNotStandard(t, "dust");
 
     // Check P2WSH outputs dust threshold

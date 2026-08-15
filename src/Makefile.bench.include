@@ -30,6 +30,7 @@ bench_bench_bitcoin_SOURCES = \
   bench/data.cpp \
   bench/data.h \
   bench/descriptors.cpp \
+  bench/dilithium.cpp \
   bench/disconnected_transactions.cpp \
   bench/duplicate_inputs.cpp \
   bench/ellswift.cpp \
@@ -82,7 +83,8 @@ bench_bench_bitcoin_LDADD = \
   $(EVENT_PTHREADS_LIBS) \
   $(EVENT_LIBS) \
   $(MINIUPNPC_LIBS) \
-  $(NATPMP_LIBS)
+  $(NATPMP_LIBS) \
+  $(LIBOQS_LIBS)
 
 if ENABLE_ZMQ
 bench_bench_bitcoin_LDADD += $(LIBBITCOIN_ZMQ) $(ZMQ_LIBS)

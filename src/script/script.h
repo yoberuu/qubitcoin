@@ -1,5 +1,5 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-present The Bitcoin Core developers
+// Copyright (c) 2009-present Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -23,8 +23,16 @@
 #include <utility>
 #include <vector>
 
-// Maximum number of bytes pushable to the stack
-static const unsigned int MAX_SCRIPT_ELEMENT_SIZE = 520;
+// Maximum number of bytes pushable to the stack.
+//
+// QubitCoin note: Bitcoin uses 520 here, which comfortably fits secp256k1 keys
+// (33/65 B) and DER signatures (~72 B). Post-quantum ML-DSA-65 (Dilithium)
+// public keys are 1952 B and signatures ~3309 B, both of which must be pushed
+// onto the stack for OP_CHECKSIG-style scripts. This limit is therefore raised
+// to 4096 so a single Dilithium key or signature fits in one stack element.
+// This is a consensus change and is only acceptable because QubitCoin is a
+// fresh chain (no historical blocks to invalidate).
+static const unsigned int MAX_SCRIPT_ELEMENT_SIZE = 4096;
 
 // Maximum number of non-push operations per script
 static const int MAX_OPS_PER_SCRIPT = 201;

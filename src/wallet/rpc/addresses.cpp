@@ -1,10 +1,11 @@
-// Copyright (c) 2011-present The Bitcoin Core developers
+// Copyright (c) 2011-present Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <config/bitcoin-config.h> // IWYU pragma: keep
 
 #include <core_io.h>
+#include <dilithiumpubkey.h>
 #include <key_io.h>
 #include <rpc/util.h>
 #include <script/script.h>
@@ -21,15 +22,16 @@ namespace wallet {
 RPCHelpMan getnewaddress()
 {
     return RPCHelpMan{"getnewaddress",
-                "\nReturns a new Bitcoin address for receiving payments.\n"
+                "\nReturns a new QubitCoin address for receiving payments.\n"
                 "If 'label' is specified, it is added to the address book \n"
-                "so payments received with the address will be associated with 'label'.\n",
+                "so payments received with the address will be associated with 'label'.\n"
+                "The default address type is post-quantum Dilithium (no type argument needed).\n",
                 {
                     {"label", RPCArg::Type::STR, RPCArg::Default{""}, "The label name for the address to be linked to. It can also be set to the empty string \"\" to represent the default label. The label does not need to exist, it will be created if there is no label by the given name."},
-                    {"address_type", RPCArg::Type::STR, RPCArg::DefaultHint{"set by -addresstype"}, "The address type to use. Options are \"legacy\", \"p2sh-segwit\", \"bech32\", and \"bech32m\"."},
+                    {"address_type", RPCArg::Type::STR, RPCArg::Default{"dilithium"}, "The address type to use. On QubitCoin only \"dilithium\" is supported for spending."},
                 },
                 RPCResult{
-                    RPCResult::Type::STR, "address", "The new bitcoin address"
+                    RPCResult::Type::STR, "address", "The new Dilithium address"
                 },
                 RPCExamples{
                     HelpExampleCli("getnewaddress", "")
@@ -60,6 +62,12 @@ RPCHelpMan getnewaddress()
         output_type = parsed.value();
     }
 
+    // QubitCoin is a pure post-quantum chain: only Dilithium addresses can be
+    // received to and spent, so reject every other (ECDSA-backed) address type.
+    if (output_type != OutputType::DILITHIUM) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "QubitCoin is a post-quantum chain: only the \"dilithium\" address type is supported");
+    }
+
     auto op_dest = pwallet->GetNewDestination(output_type, label);
     if (!op_dest) {
         throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, util::ErrorString(op_dest).original);
@@ -73,10 +81,11 @@ RPCHelpMan getnewaddress()
 RPCHelpMan getrawchangeaddress()
 {
     return RPCHelpMan{"getrawchangeaddress",
-                "\nReturns a new Bitcoin address, for receiving change.\n"
-                "This is for use with raw transactions, NOT normal use.\n",
+                "\nReturns a new QubitCoin address, for receiving change.\n"
+                "This is for use with raw transactions, NOT normal use.\n"
+                "The default address type is post-quantum Dilithium.\n",
                 {
-                    {"address_type", RPCArg::Type::STR, RPCArg::DefaultHint{"set by -changetype"}, "The address type to use. Options are \"legacy\", \"p2sh-segwit\", \"bech32\", and \"bech32m\"."},
+                    {"address_type", RPCArg::Type::STR, RPCArg::Default{"dilithium"}, "The address type to use. On QubitCoin only \"dilithium\" is supported for spending."},
                 },
                 RPCResult{
                     RPCResult::Type::STR, "address", "The address"
@@ -105,6 +114,11 @@ RPCHelpMan getrawchangeaddress()
             throw JSONRPCError(RPC_INVALID_PARAMETER, "Legacy wallets cannot provide bech32m addresses");
         }
         output_type = parsed.value();
+    }
+
+    // QubitCoin is a pure post-quantum chain: only Dilithium change is supported.
+    if (output_type != OutputType::DILITHIUM) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "QubitCoin is a post-quantum chain: only the \"dilithium\" address type is supported");
     }
 
     auto op_dest = pwallet->GetNewChangeDestination(output_type);
@@ -465,6 +479,20 @@ public:
         return obj;
     }
 
+    UniValue operator()(const DilithiumPKHash& pkhash) const
+    {
+        CKeyID keyID{ToKeyID(pkhash)};
+        UniValue obj(UniValue::VOBJ);
+        // Note: "ispostquantum" is emitted by the non-wallet DescribeAddress
+        // visitor (rpc/util.cpp); getaddressinfo merges both, so we must not
+        // push it again here or the key would appear twice.
+        CDilithiumPubKey pubkey;
+        if (provider && provider->GetDilithiumPubKey(keyID, pubkey)) {
+            obj.pushKV("pubkey", HexStr(Span<const unsigned char>(pubkey.data(), pubkey.size())));
+        }
+        return obj;
+    }
+
     // NOLINTNEXTLINE(misc-no-recursion)
     UniValue operator()(const ScriptHash& scripthash) const
     {
@@ -556,6 +584,7 @@ RPCHelpMan getaddressinfo()
                             "and relation to the wallet (ismine, iswatchonly)."},
                         }},
                         {RPCResult::Type::BOOL, "iscompressed", /*optional=*/true, "If the pubkey is compressed."},
+                        {RPCResult::Type::BOOL, "ispostquantum", /*optional=*/true, "If the address is a post-quantum Dilithium (ML-DSA-65) address. False means the address cannot be spent on this chain, so paying to it would burn the funds."},
                         {RPCResult::Type::NUM_TIME, "timestamp", /*optional=*/true, "The creation time of the key, if available, expressed in " + UNIX_EPOCH_TIME + "."},
                         {RPCResult::Type::STR, "hdkeypath", /*optional=*/true, "The HD keypath, if the key is HD and available."},
                         {RPCResult::Type::STR_HEX, "hdseedid", /*optional=*/true, "The Hash160 of the HD seed."},
@@ -605,8 +634,20 @@ RPCHelpMan getaddressinfo()
     if (provider) {
         auto inferred = InferDescriptor(scriptPubKey, *provider);
         bool solvable = inferred->IsSolvable();
+        // QubitCoin: a post-quantum Dilithium output uses the same P2PKH script
+        // template as an ECDSA address, which the descriptor engine cannot mark as
+        // solvable (there is no ECDSA key). Report it as solvable when the signing
+        // provider holds the corresponding Dilithium key.
+        if (!solvable) {
+            std::vector<std::vector<unsigned char>> sols;
+            if (Solver(scriptPubKey, sols) == TxoutType::PUBKEYHASH) {
+                CDilithiumPubKey dpubkey;
+                if (provider->GetDilithiumPubKey(CKeyID(uint160(sols[0])), dpubkey)) solvable = true;
+            }
+        }
         ret.pushKV("solvable", solvable);
-        if (solvable) {
+        // Only descriptor-solvable scripts have a meaningful descriptor string.
+        if (inferred->IsSolvable()) {
             ret.pushKV("desc", inferred->ToString());
         }
     } else {

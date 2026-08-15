@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2022 The Bitcoin Core developers
+// Copyright (c) 2017-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -228,11 +228,11 @@ BOOST_AUTO_TEST_CASE(script_standard_ExtractDestination)
     BOOST_CHECK(!ExtractDestination(s, address));
     BOOST_CHECK(std::get<PubKeyDestination>(address) == PubKeyDestination(pubkey));
 
-    // TxoutType::PUBKEYHASH
+    // TxoutType::PUBKEYHASH — QubitCoin displays every P2PKH as DilithiumPKHash.
     s.clear();
     s << OP_DUP << OP_HASH160 << ToByteVector(pubkey.GetID()) << OP_EQUALVERIFY << OP_CHECKSIG;
     BOOST_CHECK(ExtractDestination(s, address));
-    BOOST_CHECK(std::get<PKHash>(address) == PKHash(pubkey));
+    BOOST_CHECK(std::get<DilithiumPKHash>(address) == DilithiumPKHash(pubkey.GetID()));
 
     // TxoutType::SCRIPTHASH
     CScript redeemScript(s); // initialize with leftover P2PKH script

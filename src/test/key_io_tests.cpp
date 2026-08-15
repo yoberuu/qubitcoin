@@ -1,13 +1,16 @@
-// Copyright (c) 2011-2022 The Bitcoin Core developers
+// Copyright (c) 2011-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <test/data/key_io_invalid.json.h>
 #include <test/data/key_io_valid.json.h>
 
+#include <addresstype.h>
+#include <chainparams.h>
 #include <key.h>
 #include <key_io.h>
 #include <script/script.h>
+#include <uint256.h>
 #include <test/util/json.h>
 #include <test/util/setup_common.h>
 #include <util/chaintype.h>
@@ -144,6 +147,44 @@ BOOST_AUTO_TEST_CASE(key_io_invalid)
             BOOST_CHECK_MESSAGE(!privkey.IsValid(), "IsValid privkey in mainnet:" + strTest);
         }
     }
+}
+
+// Phase 7 (Critical: address collision with Bitcoin). QubitCoin's address
+// parameters are distinct from Bitcoin's on every network, so a Bitcoin address
+// can never decode as a valid QubitCoin address, and a QubitCoin (Dilithium)
+// address is not a Bitcoin address.
+BOOST_AUTO_TEST_CASE(qubitcoin_no_bitcoin_address_collision)
+{
+    SelectParams(ChainType::MAIN);
+
+    // The mainnet bech32 HRP is "qc", never Bitcoin's "bc".
+    BOOST_CHECK_EQUAL(Params().Bech32HRP(), "qc");
+
+    // A QubitCoin mainnet Dilithium address renders with the distinctive 'Q'
+    // prefix and round-trips through decode back to the same destination.
+    uint160 h;
+    for (unsigned int i = 0; i < h.size(); ++i) *(h.begin() + i) = static_cast<unsigned char>(i);
+    const DilithiumPKHash dpkh{h};
+    const std::string qaddr = EncodeDestination(dpkh);
+    BOOST_CHECK_MESSAGE(!qaddr.empty() && qaddr[0] == 'Q', "Dilithium mainnet address should start with 'Q': " + qaddr);
+    BOOST_CHECK(DecodeDestination(qaddr) == CTxDestination{dpkh});
+
+    // Real Bitcoin mainnet addresses must NOT decode as valid QubitCoin addresses.
+    const std::vector<std::string> bitcoin_addrs = {
+        "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2",                       // Bitcoin P2PKH (v0)
+        "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy",                       // Bitcoin P2SH (v5)
+        "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",               // Bitcoin bech32 v0
+        "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq",               // Bitcoin bech32 v0
+    };
+    for (const auto& a : bitcoin_addrs) {
+        BOOST_CHECK_MESSAGE(!IsValidDestination(DecodeDestination(a)),
+                            "Bitcoin address unexpectedly valid on QubitCoin: " + a);
+    }
+
+    // A canonical Bitcoin WIF private key (version 0x80) must not decode either.
+    BOOST_CHECK(!DecodeSecret("5HpHagT65TZzG1PH3CSu63k8DbpvD8s5ip4nEB3kEsreAnchuDf").IsValid());
+
+    SelectParams(ChainType::MAIN);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

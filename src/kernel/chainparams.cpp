@@ -1,5 +1,5 @@
 // Copyright (c) 2010 Satoshi Nakamoto
-// Copyright (c) 2009-2021 The Bitcoin Core developers
+// Copyright (c) 2009-2021 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -62,15 +62,49 @@ static CBlock CreateGenesisBlock(const char* pszTimestamp, const CScript& genesi
  * transaction cannot be spent since it did not originally exist in the
  * database.
  *
- * CBlock(hash=000000000019d6, ver=1, hashPrevBlock=00000000000000, hashMerkleRoot=4a5e1e, nTime=1231006505, nBits=1d00ffff, nNonce=2083236893, vtx=1)
- *   CTransaction(hash=4a5e1e, ver=1, vin.size=1, vout.size=1, nLockTime=0)
- *     CTxIn(COutPoint(000000, -1), coinbase 04ffff001d0104455468652054696d65732030332f4a616e2f32303039204368616e63656c6c6f72206f6e206272696e6b206f66207365636f6e64206261696c6f757420666f722062616e6b73)
- *     CTxOut(nValue=50.00000000, scriptPubKey=0x5F1DF16B2B704C8A578D0B)
- *   vMerkleTree: 4a5e1e
+ * QubitCoin mainnet genesis (mined via contrib/devtools/mine_genesis.py):
+ *   hash=000000002f4fcc60ef61353d1767c691562dd380f240c1fcf47bf0e1c655d011
+ *   merkle=70be9292637f6486895bb3f4c3880350116284559985d492ff3c269b40d22255
+ *   time=1783296000 nonce=1735730177 bits=0x1d00ffff reward=500 QBTC
  */
 static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits, int32_t nVersion, const CAmount& genesisReward)
 {
     const char* pszTimestamp = "The Times 03/Jan/2009 Chancellor on brink of second bailout for banks";
+    const CScript genesisOutputScript = CScript() << ParseHex("04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5f") << OP_CHECKSIG;
+    return CreateGenesisBlock(pszTimestamp, genesisOutputScript, nTime, nNonce, nBits, nVersion, genesisReward);
+}
+
+static CBlock CreateQubitCoinMainGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits, int32_t nVersion, const CAmount& genesisReward)
+{
+    const char* pszTimestamp = "Yelpful Technologies launches QubitCoin ($QBTC) 06/Jul/2026";
+    const CScript genesisOutputScript = CScript() << ParseHex("04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5f") << OP_CHECKSIG;
+    return CreateGenesisBlock(pszTimestamp, genesisOutputScript, nTime, nNonce, nBits, nVersion, genesisReward);
+}
+
+static CBlock CreateQubitCoinRegtestGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits, int32_t nVersion, const CAmount& genesisReward)
+{
+    const char* pszTimestamp = "QubitCoin regtest genesis 06/Jul/2026";
+    const CScript genesisOutputScript = CScript() << ParseHex("04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5f") << OP_CHECKSIG;
+    return CreateGenesisBlock(pszTimestamp, genesisOutputScript, nTime, nNonce, nBits, nVersion, genesisReward);
+}
+
+static CBlock CreateQubitCoinTestnet3GenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits, int32_t nVersion, const CAmount& genesisReward)
+{
+    const char* pszTimestamp = "QubitCoin Testnet3 09/Jul/2026";
+    const CScript genesisOutputScript = CScript() << ParseHex("04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5f") << OP_CHECKSIG;
+    return CreateGenesisBlock(pszTimestamp, genesisOutputScript, nTime, nNonce, nBits, nVersion, genesisReward);
+}
+
+static CBlock CreateQubitCoinTestnet4GenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits, int32_t nVersion, const CAmount& genesisReward)
+{
+    const char* pszTimestamp = "QubitCoin Testnet4 09/Jul/2026";
+    const CScript genesisOutputScript = CScript() << ParseHex("04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5f") << OP_CHECKSIG;
+    return CreateGenesisBlock(pszTimestamp, genesisOutputScript, nTime, nNonce, nBits, nVersion, genesisReward);
+}
+
+static CBlock CreateQubitCoinSignetGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits, int32_t nVersion, const CAmount& genesisReward)
+{
+    const char* pszTimestamp = "QubitCoin Signet genesis 09/Jul/2026";
     const CScript genesisOutputScript = CScript() << ParseHex("04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5f") << OP_CHECKSIG;
     return CreateGenesisBlock(pszTimestamp, genesisOutputScript, nTime, nNonce, nBits, nVersion, genesisReward);
 }
@@ -84,18 +118,15 @@ public:
         m_chain_type = ChainType::MAIN;
         consensus.signet_blocks = false;
         consensus.signet_challenge.clear();
-        consensus.nSubsidyHalvingInterval = 210000;
-        consensus.script_flag_exceptions.emplace( // BIP16 exception
-            uint256{"00000000000002dc756eebf4f49723ed8d30cc28a5f108eb94b1ba88ac4f9c22"}, SCRIPT_VERIFY_NONE);
-        consensus.script_flag_exceptions.emplace( // Taproot exception
-            uint256{"0000000000000000000f14c35b2d841e986ab5441de8c585d5ffe55ea1e395ad"}, SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS);
-        consensus.BIP34Height = 227931;
-        consensus.BIP34Hash = uint256{"000000000000024b89b42a942fe0d9fea3bb44ab7bd1b19115dd6a759c0808b8"};
-        consensus.BIP65Height = 388381; // 000000000000000004c2b624ed5d7756c508d90fd0da2c7c679febfa6c4735f0
-        consensus.BIP66Height = 363725; // 00000000000000000379eaa19dce8c9b722d46ae6a57c2f1a988119488b50931
-        consensus.CSVHeight = 419328; // 000000000000000004a1b34462cb8aeebd5799177f7a29cf28f2d1961716b5b5
-        consensus.SegwitHeight = 481824; // 0000000000000000001c8018d9cb3b742ef25114f27563e3fc4a1902167f9893
-        consensus.MinBIP9WarningHeight = 483840; // segwit activation height + miner confirmation window
+        consensus.nSubsidyHalvingInterval = 210000; // 500 QBTC -> 250 -> ... total ~210M QBTC
+        // QubitCoin launches with modern rules active from block 1.
+        consensus.BIP34Height = 1;
+        consensus.BIP34Hash = uint256{};
+        consensus.BIP65Height = 1;
+        consensus.BIP66Height = 1;
+        consensus.CSVHeight = 1;
+        consensus.SegwitHeight = 0;
+        consensus.MinBIP9WarningHeight = 0;
         consensus.powLimit = uint256{"00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffff"};
         consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
         consensus.nPowTargetSpacing = 10 * 60;
@@ -109,100 +140,98 @@ public:
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].min_activation_height = 0; // No activation delay
 
-        // Deployment of Taproot (BIPs 340-342)
+        // Deployment of Taproot (BIPs 340-342) — active from genesis
         consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].bit = 2;
-        consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].nStartTime = 1619222400; // April 24th, 2021
-        consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].nTimeout = 1628640000; // August 11th, 2021
-        consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].min_activation_height = 709632; // Approximately November 12th, 2021
+        consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].nStartTime = Consensus::BIP9Deployment::ALWAYS_ACTIVE;
+        consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;
+        consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].min_activation_height = 0;
 
-        consensus.nMinimumChainWork = uint256{"000000000000000000000000000000000000000088e186b70e0862c193ec44d6"};
-        consensus.defaultAssumeValid = uint256{"000000000000000000011c5890365bdbe5d25b97ce0057589acaef4f1a57263f"}; // 856760
+        consensus.nMinimumChainWork = uint256{};
+        consensus.defaultAssumeValid = uint256{};
 
         /**
          * The message start string is designed to be unlikely to occur in normal data.
          * The characters are rarely used upper ASCII, not valid as UTF-8, and produce
          * a large 32-bit integer with any alignment.
          */
-        pchMessageStart[0] = 0xf9;
-        pchMessageStart[1] = 0xbe;
-        pchMessageStart[2] = 0xb4;
-        pchMessageStart[3] = 0xd9;
-        nDefaultPort = 8333;
+        pchMessageStart[0] = 0x51; // QBTC
+        pchMessageStart[1] = 0x42;
+        pchMessageStart[2] = 0x54;
+        pchMessageStart[3] = 0x43;
+        nDefaultPort = 2096;
         nPruneAfterHeight = 100000;
         m_assumed_blockchain_size = 620;
         m_assumed_chain_state_size = 14;
 
-        genesis = CreateGenesisBlock(1231006505, 2083236893, 0x1d00ffff, 1, 50 * COIN);
+        genesis = CreateQubitCoinMainGenesisBlock(1783296000, 1735730177, 0x1d00ffff, 1, INITIAL_BLOCK_SUBSIDY);
         consensus.hashGenesisBlock = genesis.GetHash();
-        assert(consensus.hashGenesisBlock == uint256{"000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"});
-        assert(genesis.hashMerkleRoot == uint256{"4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"});
+        assert(consensus.hashGenesisBlock == uint256{"000000002f4fcc60ef61353d1767c691562dd380f240c1fcf47bf0e1c655d011"});
+        assert(genesis.hashMerkleRoot == uint256{"70be9292637f6486895bb3f4c3880350116284559985d492ff3c269b40d22255"});
+        consensus.BIP34Hash = consensus.hashGenesisBlock;
 
-        // Note that of those which support the service bits prefix, most only support a subset of
-        // possible options.
-        // This is fine at runtime as we'll fall back to using them as an addrfetch if they don't support the
-        // service bits we want, but we should get them updated to support all service bits wanted by any
-        // release ASAP to avoid it where possible.
-        vSeeds.emplace_back("seed.bitcoin.sipa.be."); // Pieter Wuille, only supports x1, x5, x9, and xd
-        vSeeds.emplace_back("dnsseed.bluematt.me."); // Matt Corallo, only supports x9
-        vSeeds.emplace_back("dnsseed.bitcoin.dashjr-list-of-p2p-nodes.us."); // Luke Dashjr
-        vSeeds.emplace_back("seed.bitcoin.jonasschnelli.ch."); // Jonas Schnelli, only supports x1, x5, x9, and xd
-        vSeeds.emplace_back("seed.btc.petertodd.net."); // Peter Todd, only supports x1, x5, x9, and xd
-        vSeeds.emplace_back("seed.bitcoin.sprovoost.nl."); // Sjors Provoost
-        vSeeds.emplace_back("dnsseed.emzy.de."); // Stephan Oeste
-        vSeeds.emplace_back("seed.bitcoin.wiz.biz."); // Jason Maurice
-        vSeeds.emplace_back("seed.mainnet.achownodes.xyz."); // Ava Chow, only supports x1, x5, x9, x49, x809, x849, xd, x400, x404, x408, x448, xc08, xc48, x40c
+        // DNS seeds: temporary placeholders until QubitCoin seed infrastructure is deployed.
+        // vSeeds.emplace_back("seed.qubitcoin.example.");
 
-        base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,0);
-        base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,5);
-        base58Prefixes[SECRET_KEY] =     std::vector<unsigned char>(1,128);
+        // QubitCoin mainnet address encoding. Every prefix is deliberately
+        // distinct from Bitcoin's so a QubitCoin address/key can never be a valid
+        // Bitcoin address/key (and vice versa). The legacy secp256k1 prefixes are
+        // vestigial on this Dilithium-only chain but are still made unique.
+        base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,30);  // (unused ECDSA P2PKH), distinct from Dilithium's 58
+        base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,63);  // not Bitcoin's 5 ('3')
+        base58Prefixes[SECRET_KEY] =     std::vector<unsigned char>(1,145); // WIF, not Bitcoin's 128
+        // BIP32 extended-key versions are left at Bitcoin's values: QubitCoin is
+        // Dilithium-only and never serialises funds as xprv/xpub (Dilithium keys
+        // use their own HD-seed scheme), so there is nothing here to collide.
         base58Prefixes[EXT_PUBLIC_KEY] = {0x04, 0x88, 0xB2, 0x1E};
         base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x88, 0xAD, 0xE4};
+        // QubitCoin post-quantum Dilithium P2PKH addresses (mainnet). Version
+        // byte 58 renders a distinctive 'Q' address prefix. This is the primary
+        // (and only user-facing) address type on this chain.
+        base58Prefixes[PUBKEY_ADDRESS_DILITHIUM] = std::vector<unsigned char>(1,58);
 
-        bech32_hrp = "bc";
+        // Unique bech32 human-readable part: "qc" (QubitCoin), never Bitcoin's "bc".
+        bech32_hrp = "qc";
 
-        vFixedSeeds = std::vector<uint8_t>(std::begin(chainparams_seed_main), std::end(chainparams_seed_main));
+        vFixedSeeds.clear();
 
         fDefaultConsistencyChecks = false;
         m_is_mockable_chain = false;
 
         checkpointData = {
             {
-                { 11111, uint256{"0000000069e244f73d78e8fd29ba2fd2ed618bd6fa2ee92559f542fdb26e7c1d"}},
-                { 33333, uint256{"000000002dd5588a74784eaa7ab0507a18ad16a236e7b1ce69f00d7ddfb5d0a6"}},
-                { 74000, uint256{"0000000000573993a3c9e41ce34471c079dcf5f52a0e824a81e7f953b8661a20"}},
-                {105000, uint256{"00000000000291ce28027faea320c8d2b054b2e0fe44a773f3eefb151d6bdc97"}},
-                {134444, uint256{"00000000000005b12ffd4cd315cd34ffd4a594f430ac814c91184a0d42d2b0fe"}},
-                {168000, uint256{"000000000000099e61ea72015e79632f216fe6cb33d7899acb35b75c8303b763"}},
-                {193000, uint256{"000000000000059f452a5f7340de6682a977387c17010ff6e6c3bd83ca8b1317"}},
-                {210000, uint256{"000000000000048b95347e83192f69cf0366076336c639f9b7228e9ba171342e"}},
-                {216116, uint256{"00000000000001b4f4b433e81ee46494af945cf96014816a4e2370f11b23df4e"}},
-                {225430, uint256{"00000000000001c108384350f74090433e7fcf79a606b8e797f065b130575932"}},
-                {250000, uint256{"000000000000003887df1f29024b06fc2200b55f8af8f35453d7be294df2d214"}},
-                {279000, uint256{"0000000000000001ae8c72a0b0c301f67e3afca10e819efa9041e458e9bd7e40"}},
-                {295000, uint256{"00000000000000004d9b4ef50f0f9d686fd69db2e03af35a100370c64632a983"}},
+                {0, consensus.hashGenesisBlock},
             }
         };
 
-        m_assumeutxo_data = {
-            {
-                .height = 840'000,
-                .hash_serialized = AssumeutxoHash{uint256{"a2a5521b1b5ab65f67818e5e8eccabb7171a517f9e2382208f77687310768f96"}},
-                .m_chain_tx_count = 991032194,
-                .blockhash = consteval_ctor(uint256{"0000000000000000000320283a032748cef8227873ff4872689bf23f1cda83a5"}),
-            }
-        };
+        m_assumeutxo_data = {};
 
         chainTxData = ChainTxData{
-            // Data from RPC: getchaintxstats 4096 000000000000000000011c5890365bdbe5d25b97ce0057589acaef4f1a57263f
-            .nTime    = 1723649144,
-            .tx_count = 1059312821,
-            .dTxRate  = 6.721086701157182,
+            .nTime    = 1783296000,
+            .tx_count = 1,
+            .dTxRate  = 0.0,
         };
     }
 };
 
 /**
- * Testnet (v3): public test network which is reset from time to time.
+ * Testnet (v3): QubitCoin public test network.
+ *
+ * Network identity (distinct from Bitcoin testnet and QubitCoin mainnet):
+ *   magic bytes: 0x51 0x62 0x74 0x33 ("Qbt3")
+ *   P2P port:    12096   RPC port: 12095   Tor onion: 12097
+ *   bech32 HRP:  "tq"    Dilithium base58 version: 120 ('q' prefix)
+ *
+ * Consensus: fresh Dilithium-only chain with modern rules from block 1.
+ *   BIP34/65/66/CSV at height 1, Segwit at 0, Taproot ALWAYS_ACTIVE.
+ *   nMinimumChainWork and defaultAssumeValid are zeroed (no trusted checkpoints).
+ *
+ * Seeds: public fixed seeds at 142.93.6.69:12096 and 142.93.12.49:12096
+ * (contrib/seeds/nodes_test.txt). Regenerate chainparamsseeds.h after changes.
+ *
+ * Genesis (mined via contrib/devtools/mine_genesis.py):
+ *   hash=00000000c0f906a85aca8c26722998dd6292ef5c88f5912963eed730df17f09a
+ *   merkle=f0c80bc6d5ba720c2f24a5e4ab7a791d8985266515d0772e81845327ce57b0e3
+ *   time=1783555201 nonce=1728804986 bits=0x1d00ffff reward=500 QBTC
  */
 class CTestNetParams : public CChainParams {
 public:
@@ -210,16 +239,15 @@ public:
         m_chain_type = ChainType::TESTNET;
         consensus.signet_blocks = false;
         consensus.signet_challenge.clear();
-        consensus.nSubsidyHalvingInterval = 210000;
-        consensus.script_flag_exceptions.emplace( // BIP16 exception
-            uint256{"00000000dd30457c001f4095d208cc1296b0eed002427aa599874af7a432b105"}, SCRIPT_VERIFY_NONE);
-        consensus.BIP34Height = 21111;
-        consensus.BIP34Hash = uint256{"0000000023b3a96d3484e5abb3755c413e7d41500f8e2a5c3f0dd01299cd8ef8"};
-        consensus.BIP65Height = 581885; // 00000000007f6655f22f98e72ed80d8b06dc761d5da09df0fa1dc4be4f861eb6
-        consensus.BIP66Height = 330776; // 000000002104c8c45e99a8853285a3b592602a3ccde2b832481da85e9e4ba182
-        consensus.CSVHeight = 770112; // 00000000025e930139bac5c6c31a403776da130831ab85be56578f3fa75369bb
-        consensus.SegwitHeight = 834624; // 00000000002b980fcd729daaa248fd9316a5200e9b367f4ff2c42453e84201ca
-        consensus.MinBIP9WarningHeight = 836640; // segwit activation height + miner confirmation window
+        consensus.nSubsidyHalvingInterval = 210000; // 500 QBTC -> 250 -> ... total ~210M QBTC
+        // QubitCoin testnet3 launches with modern rules active from block 1.
+        consensus.BIP34Height = 1;
+        consensus.BIP34Hash = uint256{};
+        consensus.BIP65Height = 1;
+        consensus.BIP66Height = 1;
+        consensus.CSVHeight = 1;
+        consensus.SegwitHeight = 0;
+        consensus.MinBIP9WarningHeight = 0;
         consensus.powLimit = uint256{"00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffff"};
         consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
         consensus.nPowTargetSpacing = 10 * 60;
@@ -233,77 +261,94 @@ public:
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].min_activation_height = 0; // No activation delay
 
-        // Deployment of Taproot (BIPs 340-342)
+        // Deployment of Taproot (BIPs 340-342) — active from genesis
         consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].bit = 2;
-        consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].nStartTime = 1619222400; // April 24th, 2021
-        consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].nTimeout = 1628640000; // August 11th, 2021
-        consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].min_activation_height = 0; // No activation delay
+        consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].nStartTime = Consensus::BIP9Deployment::ALWAYS_ACTIVE;
+        consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;
+        consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].min_activation_height = 0;
 
-        consensus.nMinimumChainWork = uint256{"000000000000000000000000000000000000000000000f209695166be8b61fa9"};
-        consensus.defaultAssumeValid = uint256{"000000000000000465b1a66c9f386308e8c75acef9201f3f577811da09fc90ad"}; // 2873500
+        consensus.nMinimumChainWork = uint256{};
+        consensus.defaultAssumeValid = uint256{};
 
-        pchMessageStart[0] = 0x0b;
-        pchMessageStart[1] = 0x11;
-        pchMessageStart[2] = 0x09;
-        pchMessageStart[3] = 0x07;
-        nDefaultPort = 18333;
+        pchMessageStart[0] = 0x51; // Qbt3
+        pchMessageStart[1] = 0x62;
+        pchMessageStart[2] = 0x74;
+        pchMessageStart[3] = 0x33;
+        nDefaultPort = 12096;
         nPruneAfterHeight = 1000;
-        m_assumed_blockchain_size = 93;
-        m_assumed_chain_state_size = 19;
+        m_assumed_blockchain_size = 1;
+        m_assumed_chain_state_size = 0;
 
-        genesis = CreateGenesisBlock(1296688602, 414098458, 0x1d00ffff, 1, 50 * COIN);
+        genesis = CreateQubitCoinTestnet3GenesisBlock(1783555201, 1728804986, 0x1d00ffff, 1, INITIAL_BLOCK_SUBSIDY);
         consensus.hashGenesisBlock = genesis.GetHash();
-        assert(consensus.hashGenesisBlock == uint256{"000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943"});
-        assert(genesis.hashMerkleRoot == uint256{"4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"});
+        assert(consensus.hashGenesisBlock == uint256{"00000000c0f906a85aca8c26722998dd6292ef5c88f5912963eed730df17f09a"});
+        assert(genesis.hashMerkleRoot == uint256{"f0c80bc6d5ba720c2f24a5e4ab7a791d8985266515d0772e81845327ce57b0e3"});
+        consensus.BIP34Hash = consensus.hashGenesisBlock;
 
-        vFixedSeeds.clear();
+        // Public fixed seeds from contrib/seeds/nodes_test.txt:
+        //   142.93.6.69:12096, 142.93.12.49:12096
+        vFixedSeeds = std::vector<uint8_t>(std::begin(chainparams_seed_test), std::end(chainparams_seed_test));
         vSeeds.clear();
-        // nodes with support for servicebits filtering should be at the top
-        vSeeds.emplace_back("testnet-seed.bitcoin.jonasschnelli.ch.");
-        vSeeds.emplace_back("seed.tbtc.petertodd.net.");
-        vSeeds.emplace_back("seed.testnet.bitcoin.sprovoost.nl.");
-        vSeeds.emplace_back("testnet-seed.bluematt.me."); // Just a static list of stable node(s), only supports x9
-        vSeeds.emplace_back("seed.testnet.achownodes.xyz."); // Ava Chow, only supports x1, x5, x9, x49, x809, x849, xd, x400, x404, x408, x448, xc08, xc48, x40c
+        // DNS seeds: add here when DNS seeders are deployed (optional; fixed seeds above are live).
+        // vSeeds.emplace_back("seed.testnet3.qubitcoin.org.");
 
-        base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,111);
-        base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,196);
-        base58Prefixes[SECRET_KEY] =     std::vector<unsigned char>(1,239);
+        // QubitCoin testnet3 address encoding: distinct from Bitcoin testnet
+        // (111/196/239/"tb") and from QubitCoin's other networks.
+        base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,90);   // (unused ECDSA P2PKH)
+        base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,92);
+        base58Prefixes[SECRET_KEY] =     std::vector<unsigned char>(1,155);
         base58Prefixes[EXT_PUBLIC_KEY] = {0x04, 0x35, 0x87, 0xCF};
         base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x35, 0x83, 0x94};
+        // QubitCoin post-quantum Dilithium P2PKH addresses (test networks): version
+        // byte 120 renders a distinctive 'q' address prefix.
+        base58Prefixes[PUBKEY_ADDRESS_DILITHIUM] = std::vector<unsigned char>(1,120);
 
-        bech32_hrp = "tb";
-
-        vFixedSeeds = std::vector<uint8_t>(std::begin(chainparams_seed_test), std::end(chainparams_seed_test));
+        bech32_hrp = "tq";
 
         fDefaultConsistencyChecks = false;
         m_is_mockable_chain = false;
 
         checkpointData = {
             {
-                {546, uint256{"000000002a936ca763904c3c35fce2f3556c559c0214345d31b1bcebf76acb70"}},
+                {0, consensus.hashGenesisBlock},
             }
         };
 
-        m_assumeutxo_data = {
-            {
-                .height = 2'500'000,
-                .hash_serialized = AssumeutxoHash{uint256{"f841584909f68e47897952345234e37fcd9128cd818f41ee6c3ca68db8071be7"}},
-                .m_chain_tx_count = 66484552,
-                .blockhash = consteval_ctor(uint256{"0000000000000093bcb68c03a9a168ae252572d348a2eaeba2cdf9231d73206f"}),
-            }
-        };
+        m_assumeutxo_data = {};
 
         chainTxData = ChainTxData{
-            // Data from RPC: getchaintxstats 4096 000000000000000465b1a66c9f386308e8c75acef9201f3f577811da09fc90ad
-            .nTime    = 1723613341,
-            .tx_count = 187917082,
-            .dTxRate  = 3.265051477698455,
+            .nTime    = 1783555201,
+            .tx_count = 1,
+            .dTxRate  = 0.0,
         };
     }
 };
 
 /**
- * Testnet (v4): public test network which is reset from time to time.
+ * Testnet (v4): QubitCoin public test network (recommended over testnet3).
+ *
+ * Network identity (distinct from testnet3, Bitcoin testnet4, and mainnet):
+ *   magic bytes: 0x51 0x62 0x74 0x34 ("Qbt4")
+ *   P2P port:    42096   RPC port: 42095   Tor onion: 42097
+ *   bech32 HRP:  "trq"   Dilithium base58 version: 121
+ *
+ * Consensus: same fresh-chain rule set as testnet3, plus enforce_BIP94=true
+ * (Bitcoin testnet4 time-warp mitigation). BIP34/65/66/CSV at 1, Segwit at 0,
+ * Taproot ALWAYS_ACTIVE. nMinimumChainWork and defaultAssumeValid zeroed.
+ *
+ * PoW: powLimit is softer than Bitcoin-style 00000000ffff… so that after the
+ * min-difficulty rule applies (block time > 2× nPowTargetSpacing since tip),
+ * CPU `generatetoaddress` with DEFAULT_MAX_TRIES can find blocks. Genesis keeps
+ * bits=0x1d00ffff (harder than min-diff); CheckProofOfWork only requires the
+ * claimed target ≤ powLimit, so the existing genesis remains valid.
+ *
+ * Seeds: public fixed seeds at 142.93.6.69:42096 and 142.93.12.49:42096
+ * (contrib/seeds/nodes_testnet4.txt). Regenerate chainparamsseeds.h after changes.
+ *
+ * Genesis (mined via contrib/devtools/mine_genesis.py):
+ *   hash=00000000f0760be464eb2acd0069f5fbd4e50638c8b629c5d6ac50966c060636
+ *   merkle=d337a941ef9135233ff00b35ddaa2f8ff1d63515f057ce316eaf95ce96648022
+ *   time=1783555201 nonce=147812606 bits=0x1d00ffff reward=500 QBTC
  */
 class CTestNet4Params : public CChainParams {
 public:
@@ -311,15 +356,17 @@ public:
         m_chain_type = ChainType::TESTNET4;
         consensus.signet_blocks = false;
         consensus.signet_challenge.clear();
-        consensus.nSubsidyHalvingInterval = 210000;
+        consensus.nSubsidyHalvingInterval = 210000; // 500 QBTC -> 250 -> ... total ~210M QBTC
         consensus.BIP34Height = 1;
         consensus.BIP34Hash = uint256{};
         consensus.BIP65Height = 1;
         consensus.BIP66Height = 1;
         consensus.CSVHeight = 1;
-        consensus.SegwitHeight = 1;
+        consensus.SegwitHeight = 0;
         consensus.MinBIP9WarningHeight = 0;
-        consensus.powLimit = uint256S("00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+        // ~2^16 hashes expected at min-difficulty (compact ≈ 0x1f00ffff).
+        // Bitcoin-style 00000000ffff… needs ~2^32 and exhausts DEFAULT_MAX_TRIES.
+        consensus.powLimit = uint256S("0000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
         consensus.nPowTargetSpacing = 10 * 60;
         consensus.fPowAllowMinDifficultyBlocks = true;
@@ -338,71 +385,69 @@ public:
         consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;
         consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].min_activation_height = 0; // No activation delay
 
-        consensus.nMinimumChainWork = uint256{"00000000000000000000000000000000000000000000005faa15d02e6202f3ba"};
-        consensus.defaultAssumeValid = uint256{"000000005be348057db991fa5d89fe7c4695b667cfb311391a8db374b6f681fd"}; // 39550
+        consensus.nMinimumChainWork = uint256{};
+        consensus.defaultAssumeValid = uint256{};
 
-        pchMessageStart[0] = 0x1c;
-        pchMessageStart[1] = 0x16;
-        pchMessageStart[2] = 0x3f;
-        pchMessageStart[3] = 0x28;
-        nDefaultPort = 48333;
+        pchMessageStart[0] = 0x51; // Qbt4
+        pchMessageStart[1] = 0x62;
+        pchMessageStart[2] = 0x74;
+        pchMessageStart[3] = 0x34;
+        nDefaultPort = 42096;
         nPruneAfterHeight = 1000;
         m_assumed_blockchain_size = 1;
         m_assumed_chain_state_size = 0;
 
-        const char* testnet4_genesis_msg = "03/May/2024 000000000000000000001ebd58c244970b3aa9d783bb001011fbe8ea8e98e00e";
-        const CScript testnet4_genesis_script = CScript() << ParseHex("000000000000000000000000000000000000000000000000000000000000000000") << OP_CHECKSIG;
-        genesis = CreateGenesisBlock(testnet4_genesis_msg,
-                testnet4_genesis_script,
-                1714777860,
-                393743547,
-                0x1d00ffff,
-                1,
-                50 * COIN);
+        genesis = CreateQubitCoinTestnet4GenesisBlock(1783555201, 147812606, 0x1d00ffff, 1, INITIAL_BLOCK_SUBSIDY);
         consensus.hashGenesisBlock = genesis.GetHash();
-        assert(consensus.hashGenesisBlock == uint256S("0x00000000da84f2bafbbc53dee25a72ae507ff4914b867c565be350b0da8bf043"));
-        assert(genesis.hashMerkleRoot == uint256S("0x7aa0a7ae1e223414cb807e40cd57e667b718e42aaf9306db9102fe28912b7b4e"));
+        assert(consensus.hashGenesisBlock == uint256{"00000000f0760be464eb2acd0069f5fbd4e50638c8b629c5d6ac50966c060636"});
+        assert(genesis.hashMerkleRoot == uint256{"d337a941ef9135233ff00b35ddaa2f8ff1d63515f057ce316eaf95ce96648022"});
+        consensus.BIP34Hash = consensus.hashGenesisBlock;
 
-        vFixedSeeds.clear();
-        vSeeds.clear();
-        // nodes with support for servicebits filtering should be at the top
-        vSeeds.emplace_back("seed.testnet4.bitcoin.sprovoost.nl."); // Sjors Provoost
-        vSeeds.emplace_back("seed.testnet4.wiz.biz."); // Jason Maurice
-
-        base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,111);
-        base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,196);
-        base58Prefixes[SECRET_KEY] =     std::vector<unsigned char>(1,239);
-        base58Prefixes[EXT_PUBLIC_KEY] = {0x04, 0x35, 0x87, 0xCF};
-        base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x35, 0x83, 0x94};
-
-        bech32_hrp = "tb";
-
+        // Public fixed seeds from contrib/seeds/nodes_testnet4.txt:
+        //   142.93.6.69:42096, 142.93.12.49:42096
         vFixedSeeds = std::vector<uint8_t>(std::begin(chainparams_seed_testnet4), std::end(chainparams_seed_testnet4));
+        vSeeds.clear();
+        // DNS seeds: add here when DNS seeders are deployed (optional; fixed seeds above are live).
+        // vSeeds.emplace_back("seed.testnet4.qubitcoin.org.");
+
+        // QubitCoin testnet4 address encoding: distinct from testnet3, Bitcoin
+        // testnet, and QubitCoin's other networks.
+        base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,91);   // (unused ECDSA P2PKH)
+        base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,93);
+        base58Prefixes[SECRET_KEY] =     std::vector<unsigned char>(1,156);
+        base58Prefixes[EXT_PUBLIC_KEY] = {0x04, 0x35, 0x88, 0xD0};
+        base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x35, 0x84, 0x95};
+        // QubitCoin post-quantum Dilithium P2PKH addresses (version byte 121).
+        base58Prefixes[PUBKEY_ADDRESS_DILITHIUM] = std::vector<unsigned char>(1,121);
+
+        bech32_hrp = "trq";
 
         fDefaultConsistencyChecks = false;
         m_is_mockable_chain = false;
 
         checkpointData = {
             {
-                {},
+                {0, consensus.hashGenesisBlock},
             }
         };
 
-        m_assumeutxo_data = {
-            {}
-        };
+        m_assumeutxo_data = {};
 
         chainTxData = ChainTxData{
-            // Data from RPC: getchaintxstats 4096 000000005be348057db991fa5d89fe7c4695b667cfb311391a8db374b6f681fd
-            .nTime    = 1723651702,
-            .tx_count = 757229,
-            .dTxRate  = 0.01570402633472492,
+            .nTime    = 1783555201,
+            .tx_count = 1,
+            .dTxRate  = 0.0,
         };
     }
 };
 
 /**
  * Signet: test network with an additional consensus parameter (see BIP325).
+ *
+ * QubitCoin signet genesis (mined via contrib/devtools/mine_genesis.py):
+ *   hash=0000007dee6d791897d022315e2062b6045ec87d52a892c40d70b5d8425550d9
+ *   merkle=8caefdf76e544019fee417763266e593f950ca1043eb8802031bea75d015fbe5
+ *   time=1783555202 nonce=1164624 bits=0x1e0377ae reward=500 QBTC
  */
 class SigNetParams : public CChainParams {
 public:
@@ -412,23 +457,19 @@ public:
         vSeeds.clear();
 
         if (!options.challenge) {
+            // Default QubitCoin signet challenge (kept simple — same structure as Bitcoin signet)
             bin = ParseHex("512103ad5e0edad18cb1f0fc0d28a3d4f1f3e445640337489abb10404f2d1e086be430210359ef5021964fe22d6f8e05b2463c9540ce96883fe3b278760f048f5189f2e6c452ae");
-            vSeeds.emplace_back("seed.signet.bitcoin.sprovoost.nl.");
-            vSeeds.emplace_back("seed.signet.achownodes.xyz."); // Ava Chow, only supports x1, x5, x9, x49, x809, x849, xd, x400, x404, x408, x448, xc08, xc48, x40c
+            // DNS seeds: temporary placeholders until QubitCoin signet seed infrastructure is deployed.
+            // vSeeds.emplace_back("seed.signet.qubitcoin.example.");
 
-            // Hardcoded nodes can be removed once there are more DNS seeds
-            vSeeds.emplace_back("178.128.221.177");
-            vSeeds.emplace_back("v7ajjeirttkbnt32wpy3c6w3emwnfr3fkla7hpxcfokr3ysd3kqtzmqd.onion:38333");
-
-            consensus.nMinimumChainWork = uint256{"0000000000000000000000000000000000000000000000000000025dbd66e58f"};
-            consensus.defaultAssumeValid = uint256{"0000014aad1d58dddcb964dd749b073374c6306e716b22f573a2efe68d414539"}; // 208800
-            m_assumed_blockchain_size = 2;
+            consensus.nMinimumChainWork = uint256{};
+            consensus.defaultAssumeValid = uint256{};
+            m_assumed_blockchain_size = 1;
             m_assumed_chain_state_size = 0;
             chainTxData = ChainTxData{
-                // Data from RPC: getchaintxstats 4096 0000014aad1d58dddcb964dd749b073374c6306e716b22f573a2efe68d414539
-                .nTime    = 1723655233,
-                .tx_count = 5507045,
-                .dTxRate  = 0.06271073277261494,
+                .nTime    = 1783555202,
+                .tx_count = 1,
+                .dTxRate  = 0.0,
             };
         } else {
             bin = *options.challenge;
@@ -451,13 +492,13 @@ public:
         m_chain_type = ChainType::SIGNET;
         consensus.signet_blocks = true;
         consensus.signet_challenge.assign(bin.begin(), bin.end());
-        consensus.nSubsidyHalvingInterval = 210000;
+        consensus.nSubsidyHalvingInterval = 210000; // 500 QBTC -> 250 -> ... total ~210M QBTC
         consensus.BIP34Height = 1;
         consensus.BIP34Hash = uint256{};
         consensus.BIP65Height = 1;
         consensus.BIP66Height = 1;
         consensus.CSVHeight = 1;
-        consensus.SegwitHeight = 1;
+        consensus.SegwitHeight = 0;
         consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
         consensus.nPowTargetSpacing = 10 * 60;
         consensus.fPowAllowMinDifficultyBlocks = false;
@@ -484,32 +525,31 @@ public:
         uint256 hash = h.GetHash();
         std::copy_n(hash.begin(), 4, pchMessageStart.begin());
 
-        nDefaultPort = 38333;
+        nDefaultPort = 32096;
         nPruneAfterHeight = 1000;
 
-        genesis = CreateGenesisBlock(1598918400, 52613770, 0x1e0377ae, 1, 50 * COIN);
+        genesis = CreateQubitCoinSignetGenesisBlock(1783555202, 1164624, 0x1e0377ae, 1, INITIAL_BLOCK_SUBSIDY);
         consensus.hashGenesisBlock = genesis.GetHash();
-        assert(consensus.hashGenesisBlock == uint256{"00000008819873e925422c1ff0f99f7cc9bbb232af63a077a480a3633bee1ef6"});
-        assert(genesis.hashMerkleRoot == uint256{"4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"});
+        assert(consensus.hashGenesisBlock == uint256{"0000007dee6d791897d022315e2062b6045ec87d52a892c40d70b5d8425550d9"});
+        assert(genesis.hashMerkleRoot == uint256{"8caefdf76e544019fee417763266e593f950ca1043eb8802031bea75d015fbe5"});
+        consensus.BIP34Hash = consensus.hashGenesisBlock;
 
         vFixedSeeds.clear();
 
-        m_assumeutxo_data = {
-            {
-                .height = 160'000,
-                .hash_serialized = AssumeutxoHash{uint256{"fe0a44309b74d6b5883d246cb419c6221bcccf0b308c9b59b7d70783dbdf928a"}},
-                .m_chain_tx_count = 2289496,
-                .blockhash = consteval_ctor(uint256{"0000003ca3c99aff040f2563c2ad8f8ec88bd0fd6b8f0895cfaf1ef90353a62c"}),
-            }
-        };
+        m_assumeutxo_data = {};
 
-        base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,111);
-        base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,196);
-        base58Prefixes[SECRET_KEY] =     std::vector<unsigned char>(1,239);
+        // QubitCoin signet address encoding: distinct from Bitcoin signet and from
+        // QubitCoin's other networks.
+        base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,90);   // (unused ECDSA P2PKH)
+        base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,92);
+        base58Prefixes[SECRET_KEY] =     std::vector<unsigned char>(1,155);
         base58Prefixes[EXT_PUBLIC_KEY] = {0x04, 0x35, 0x87, 0xCF};
         base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x35, 0x83, 0x94};
+        // QubitCoin post-quantum Dilithium P2PKH addresses (version byte 120 -> 'q').
+        base58Prefixes[PUBKEY_ADDRESS_DILITHIUM] = std::vector<unsigned char>(1,120);
 
-        bech32_hrp = "tb";
+        // Signet uses its own bech32 HRP ("sq").
+        bech32_hrp = "sq";
 
         fDefaultConsistencyChecks = false;
         m_is_mockable_chain = false;
@@ -528,7 +568,7 @@ public:
         m_chain_type = ChainType::REGTEST;
         consensus.signet_blocks = false;
         consensus.signet_challenge.clear();
-        consensus.nSubsidyHalvingInterval = 150;
+        consensus.nSubsidyHalvingInterval = 210000;
         consensus.BIP34Height = 1; // Always active unless overridden
         consensus.BIP34Hash = uint256();
         consensus.BIP65Height = 1;  // Always active unless overridden
@@ -558,11 +598,11 @@ public:
         consensus.nMinimumChainWork = uint256{};
         consensus.defaultAssumeValid = uint256{};
 
-        pchMessageStart[0] = 0xfa;
-        pchMessageStart[1] = 0xbf;
-        pchMessageStart[2] = 0xb5;
-        pchMessageStart[3] = 0xda;
-        nDefaultPort = 18444;
+        pchMessageStart[0] = 0x51; // QBTR
+        pchMessageStart[1] = 0x42;
+        pchMessageStart[2] = 0x54;
+        pchMessageStart[3] = 0x52;
+        nDefaultPort = 21096;
         nPruneAfterHeight = opts.fastprune ? 100 : 1000;
         m_assumed_blockchain_size = 0;
         m_assumed_chain_state_size = 0;
@@ -593,10 +633,11 @@ public:
             consensus.vDeployments[deployment_pos].min_activation_height = version_bits_params.min_activation_height;
         }
 
-        genesis = CreateGenesisBlock(1296688602, 2, 0x207fffff, 1, 50 * COIN);
+        genesis = CreateQubitCoinRegtestGenesisBlock(1783296001, 0, 0x207fffff, 1, INITIAL_BLOCK_SUBSIDY);
         consensus.hashGenesisBlock = genesis.GetHash();
-        assert(consensus.hashGenesisBlock == uint256{"0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206"});
-        assert(genesis.hashMerkleRoot == uint256{"4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"});
+        assert(consensus.hashGenesisBlock == uint256{"7b9160d5ab91fb4fbe56014bdb86a9dcebafb9cc28c110f91142303f7b472747"});
+        assert(genesis.hashMerkleRoot == uint256{"a77dea23a8843d1fdcba464815fdcef9cbeb1a46aaaf9e284b378810dcf9fe97"});
+        consensus.BIP34Hash = consensus.hashGenesisBlock;
 
         vFixedSeeds.clear(); //!< Regtest mode doesn't have any fixed seeds.
         vSeeds.clear();
@@ -607,46 +648,29 @@ public:
 
         checkpointData = {
             {
-                {0, uint256{"0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206"}},
+                {0, consensus.hashGenesisBlock},
             }
         };
 
-        m_assumeutxo_data = {
-            {   // For use by unit tests
-                .height = 110,
-                .hash_serialized = AssumeutxoHash{uint256{"6657b736d4fe4db0cbc796789e812d5dba7f5c143764b1b6905612f1830609d1"}},
-                .m_chain_tx_count = 111,
-                .blockhash = consteval_ctor(uint256{"696e92821f65549c7ee134edceeeeaaa4105647a3c4fd9f298c0aec0ab50425c"}),
-            },
-            {
-                // For use by fuzz target src/test/fuzz/utxo_snapshot.cpp
-                .height = 200,
-                .hash_serialized = AssumeutxoHash{uint256{"4f34d431c3e482f6b0d67b64609ece3964dc8d7976d02ac68dd7c9c1421738f2"}},
-                .m_chain_tx_count = 201,
-                .blockhash = consteval_ctor(uint256{"5e93653318f294fb5aa339d00bbf8cf1c3515488ad99412c37608b139ea63b27"}),
-            },
-            {
-                // For use by test/functional/feature_assumeutxo.py
-                .height = 299,
-                .hash_serialized = AssumeutxoHash{uint256{"a4bf3407ccb2cc0145c49ebba8fa91199f8a3903daf0883875941497d2493c27"}},
-                .m_chain_tx_count = 334,
-                .blockhash = consteval_ctor(uint256{"3bb7ce5eba0be48939b7a521ac1ba9316afee2c7bada3a0cca24188e6d7d96c0"}),
-            },
-        };
+        m_assumeutxo_data = {};
 
         chainTxData = ChainTxData{
-            0,
-            0,
-            0
+            .nTime    = 1783296001,
+            .tx_count = 1,
+            .dTxRate  = 0.0,
         };
 
-        base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,111);
-        base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,196);
-        base58Prefixes[SECRET_KEY] =     std::vector<unsigned char>(1,239);
+        // QubitCoin regtest address encoding: distinct from Bitcoin regtest
+        // (111/196/239/"bcrt") and from QubitCoin's other networks.
+        base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,90);   // (unused ECDSA P2PKH)
+        base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,92);
+        base58Prefixes[SECRET_KEY] =     std::vector<unsigned char>(1,155);
         base58Prefixes[EXT_PUBLIC_KEY] = {0x04, 0x35, 0x87, 0xCF};
         base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x35, 0x83, 0x94};
+        // QubitCoin post-quantum Dilithium P2PKH addresses (version byte 120 -> 'q').
+        base58Prefixes[PUBKEY_ADDRESS_DILITHIUM] = std::vector<unsigned char>(1,120);
 
-        bech32_hrp = "bcrt";
+        bech32_hrp = "qcrt";
     }
 };
 

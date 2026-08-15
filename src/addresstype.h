@@ -1,4 +1,4 @@
-// Copyright (c) 2023 The Bitcoin Core developers
+// Copyright (c) 2023 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or https://www.opensource.org/licenses/mit-license.php.
 
@@ -13,8 +13,11 @@
 #include <util/hash_type.h>
 
 #include <algorithm>
+#include <string>
 #include <variant>
 #include <vector>
+
+class CDilithiumPubKey;
 
 class CNoDestination
 {
@@ -52,6 +55,33 @@ struct PKHash : public BaseHash<uint160>
     explicit PKHash(const CKeyID& pubkey_id);
 };
 CKeyID ToKeyID(const PKHash& key_hash);
+
+/**
+ * A post-quantum (Dilithium / ML-DSA-65) public-key-hash destination.
+ *
+ * QubitCoin decision: on-chain, a Dilithium P2PKH output uses the *same* script
+ * template as a normal P2PKH (OP_DUP OP_HASH160 <hash> OP_EQUALVERIFY
+ * OP_CHECKSIG). The interpreter's OP_CHECKSIG dispatches to Dilithium
+ * verification purely based on the 1952-byte public key revealed in the
+ * scriptSig, so no new opcode or script form is needed.
+ *
+ * The distinction between an ECDSA PKHash and a DilithiumPKHash therefore lives
+ * only at the *address* layer (a dedicated base58 version byte) and in the
+ * wallet's key store (which key type backs the hash). A user-pasted leftover
+ * ECDSA address still decodes as PKHash and is refused by send-time burn
+ * protection. Script-derived destinations go the other way: ExtractDestination()
+ * returns DilithiumPKHash for every P2PKH script, because that is the only key
+ * type that can spend one on this chain. That keeps listunspent / getblock /
+ * gettransaction in the same encoding as getnewaddress.
+ */
+struct DilithiumPKHash : public BaseHash<uint160>
+{
+    DilithiumPKHash() : BaseHash() {}
+    explicit DilithiumPKHash(const uint160& hash) : BaseHash(hash) {}
+    explicit DilithiumPKHash(const CDilithiumPubKey& pubkey);
+    explicit DilithiumPKHash(const CKeyID& pubkey_id);
+};
+CKeyID ToKeyID(const DilithiumPKHash& key_hash);
 
 struct WitnessV0KeyHash;
 
@@ -129,6 +159,7 @@ struct PayToAnchor : public WitnessUnknown
  *  * CNoDestination: Optionally a script, no corresponding address.
  *  * PubKeyDestination: TxoutType::PUBKEY (P2PK), no corresponding address
  *  * PKHash: TxoutType::PUBKEYHASH destination (P2PKH address)
+ *  * DilithiumPKHash: TxoutType::PUBKEYHASH destination backed by a Dilithium key (P2PKH-style address, distinct base58 prefix)
  *  * ScriptHash: TxoutType::SCRIPTHASH destination (P2SH address)
  *  * WitnessV0ScriptHash: TxoutType::WITNESS_V0_SCRIPTHASH destination (P2WSH address)
  *  * WitnessV0KeyHash: TxoutType::WITNESS_V0_KEYHASH destination (P2WPKH address)
@@ -137,10 +168,38 @@ struct PayToAnchor : public WitnessUnknown
  *  * WitnessUnknown: TxoutType::WITNESS_UNKNOWN destination (P2W??? address)
  *  A CTxDestination is the internal data type encoded in a bitcoin address
  */
-using CTxDestination = std::variant<CNoDestination, PubKeyDestination, PKHash, ScriptHash, WitnessV0ScriptHash, WitnessV0KeyHash, WitnessV1Taproot, PayToAnchor, WitnessUnknown>;
+using CTxDestination = std::variant<CNoDestination, PubKeyDestination, PKHash, ScriptHash, WitnessV0ScriptHash, WitnessV0KeyHash, WitnessV1Taproot, PayToAnchor, WitnessUnknown, DilithiumPKHash>;
 
 /** Check whether a CTxDestination corresponds to one with an address. */
 bool IsValidDestination(const CTxDestination& dest);
+
+/**
+ * QubitCoin: whether coins paid to this destination can ever be spent.
+ *
+ * Only ML-DSA-65 signatures verify on this chain, so every address type
+ * inherited from Bitcoin is a permanent burn: no key that can exist will
+ * satisfy the script. That makes this a send-time safety check — it is neither
+ * a consensus nor a relay rule, and it deliberately says nothing about outputs
+ * that already exist on the chain.
+ *
+ * The check belongs at the *address* layer. A DilithiumPKHash and a legacy
+ * PKHash produce byte-identical P2PKH scripts (see DilithiumPKHash above), so
+ * once an address has become a scriptPubKey the distinction is gone; a
+ * script-level check would both miss burns and reject genuine Dilithium
+ * payments. Anything holding a raw script rather than an address — a data
+ * carrier output, a hand-built scriptPubKey — is outside what this can judge.
+ *
+ * WitnessV0KeyHash is the one type that could later become spendable: a P2WPKH
+ * over an ML-DSA key hash is already consensus-valid and relays, at roughly a
+ * quarter the weight of the bare form. It is refused because nothing on this
+ * chain hands out such an address, so one a user pastes today came from
+ * Bitcoin-shaped tooling over a secp256k1 key. Adding a witness Dilithium
+ * address type is the edit that flips it.
+ */
+bool IsDilithiumDestination(const CTxDestination& dest);
+
+/** Name of the address type behind a destination, for diagnostics. */
+std::string DestinationTypeName(const CTxDestination& dest);
 
 /**
  * Parse a scriptPubKey for the destination.

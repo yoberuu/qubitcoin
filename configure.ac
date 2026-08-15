@@ -4,10 +4,10 @@ define(_CLIENT_VERSION_MINOR, 0)
 define(_CLIENT_VERSION_BUILD, 0)
 define(_CLIENT_VERSION_RC, 0)
 define(_CLIENT_VERSION_IS_RELEASE, true)
-define(_COPYRIGHT_YEAR, 2024)
+define(_COPYRIGHT_YEAR, 2026)
 define(_COPYRIGHT_HOLDERS,[The %s developers])
-define(_COPYRIGHT_HOLDERS_SUBSTITUTION,[[Bitcoin Core]])
-AC_INIT([Bitcoin Core],m4_join([.], _CLIENT_VERSION_MAJOR, _CLIENT_VERSION_MINOR, _CLIENT_VERSION_BUILD)m4_if(_CLIENT_VERSION_RC, [0], [], [rc]_CLIENT_VERSION_RC),[https://github.com/bitcoin/bitcoin/issues],[bitcoin],[https://bitcoincore.org/])
+define(_COPYRIGHT_HOLDERS_SUBSTITUTION,[[QubitCoin]])
+AC_INIT([QubitCoin],m4_join([.], _CLIENT_VERSION_MAJOR, _CLIENT_VERSION_MINOR, _CLIENT_VERSION_BUILD)m4_if(_CLIENT_VERSION_RC, [0], [], [rc]_CLIENT_VERSION_RC),[https://github.com/yelpful-technologies/qubitcoin/issues],[qubitcoin],[https://qubitcoin.org/])
 AC_CONFIG_SRCDIR([src/validation.cpp])
 AC_CONFIG_HEADERS([src/config/bitcoin-config.h])
 AC_CONFIG_AUX_DIR([build-aux])
@@ -29,14 +29,14 @@ if test -n "$PKG_CONFIG_LIBDIR"; then
   PKG_CONFIG="env PKG_CONFIG_LIBDIR=$PKG_CONFIG_LIBDIR $PKG_CONFIG"
 fi
 
-BITCOIN_DAEMON_NAME=bitcoind
-BITCOIN_GUI_NAME=bitcoin-qt
+BITCOIN_DAEMON_NAME=qbitcoind
+BITCOIN_GUI_NAME=qbitcoin-qt
 BITCOIN_TEST_NAME=test_bitcoin
-BITCOIN_CLI_NAME=bitcoin-cli
-BITCOIN_TX_NAME=bitcoin-tx
-BITCOIN_UTIL_NAME=bitcoin-util
+BITCOIN_CLI_NAME=qbitcoin-cli
+BITCOIN_TX_NAME=qbitcoin-tx
+BITCOIN_UTIL_NAME=qbitcoin-util
 BITCOIN_CHAINSTATE_NAME=bitcoin-chainstate
-BITCOIN_WALLET_TOOL_NAME=bitcoin-wallet
+BITCOIN_WALLET_TOOL_NAME=qbitcoin-wallet
 dnl Multi Process
 BITCOIN_MP_NODE_NAME=bitcoin-node
 BITCOIN_MP_GUI_NAME=bitcoin-gui
@@ -203,6 +203,12 @@ AC_ARG_WITH([qrencode],
   [enable QR code support (default is yes if qt is enabled and libqrencode is found)])],
   [use_qr=$withval],
   [use_qr=auto])
+
+AC_ARG_WITH([liboqs],
+  [AS_HELP_STRING([--with-liboqs=yes|no|auto],
+  [enable Open Quantum Safe (liboqs) support for post-quantum ML-DSA/Dilithium signatures (default is auto)])],
+  [use_liboqs=$withval],
+  [use_liboqs=auto])
 
 AC_ARG_ENABLE([hardening],
   [AS_HELP_STRING([--disable-hardening],
@@ -1333,6 +1339,45 @@ if test x$use_libevent = xyes; then
   CXXFLAGS="$TEMP_CXXFLAGS"
 fi
 
+dnl Open Quantum Safe (liboqs) check for post-quantum ML-DSA / Dilithium support
+
+have_liboqs=no
+if test "$use_liboqs" != "no"; then
+  PKG_CHECK_MODULES([LIBOQS], [liboqs],
+    [have_liboqs=yes
+     dnl liboqs is commonly shipped as a static archive that pulls in OpenSSL
+     dnl (libcrypto/libssl). QubitCoin links statically, so resolve the private
+     dnl dependencies via `pkg-config --static` to avoid undefined references.
+     LIBOQS_STATIC_LIBS=`$PKG_CONFIG --static --libs liboqs 2>/dev/null`
+     if test -n "$LIBOQS_STATIC_LIBS"; then
+       LIBOQS_LIBS="$LIBOQS_STATIC_LIBS"
+     fi],
+    [have_liboqs=no])
+
+  dnl Fall back to a plain header/library probe if pkg-config is unavailable.
+  if test "$have_liboqs" = "no"; then
+    AC_CHECK_HEADER([oqs/oqs.h],
+      [AC_CHECK_LIB([oqs], [OQS_SIG_new],
+        [have_liboqs=yes; LIBOQS_LIBS="-loqs -lcrypto"; LIBOQS_CFLAGS=""],
+        [have_liboqs=no], [-lcrypto])],
+      [have_liboqs=no])
+  fi
+
+  if test "$have_liboqs" = "no" && test "$use_liboqs" = "yes"; then
+    AC_MSG_ERROR([liboqs requested (--with-liboqs=yes) but not found. Install the Open Quantum Safe library or use --with-liboqs=no.])
+  fi
+
+  if test "$have_liboqs" = "yes"; then
+    if test "$suppress_external_warnings" != "no"; then
+      LIBOQS_CFLAGS=SUPPRESS_WARNINGS($LIBOQS_CFLAGS)
+    fi
+    AC_DEFINE([ENABLE_DILITHIUM], [1], [Define this symbol to enable post-quantum ML-DSA/Dilithium support via liboqs])
+  fi
+fi
+AM_CONDITIONAL([ENABLE_DILITHIUM], [test "$have_liboqs" = "yes"])
+AC_SUBST(LIBOQS_CFLAGS)
+AC_SUBST(LIBOQS_LIBS)
+
 dnl QR Code encoding library check
 
 if test "$use_qr" != "no"; then
@@ -1731,6 +1776,7 @@ if test $bitcoin_enable_qt != "no"; then
     echo "    with qr       = $use_qr"
 fi
 echo "  with zmq        = $use_zmq"
+echo "  with liboqs     = $have_liboqs (post-quantum ML-DSA/Dilithium)"
 if test $enable_fuzz = "no"; then
     echo "  with test       = $use_tests"
 else

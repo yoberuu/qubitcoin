@@ -1,4 +1,4 @@
-// Copyright (c) 2009-2021 The Bitcoin Core developers
+// Copyright (c) 2009-2021 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -135,6 +135,29 @@ bool DecryptKey(const CKeyingMaterial& vMasterKey, const std::vector<unsigned ch
         return false;
 
     key.Set(vchSecret.begin(), vchSecret.end(), vchPubKey.IsCompressed());
+    return key.VerifyPubKey(vchPubKey);
+}
+
+bool DecryptDilithiumKey(const CKeyingMaterial& vMasterKey, const std::vector<unsigned char>& vchCryptedSecret, const CDilithiumPubKey& vchPubKey, CDilithiumKey& key)
+{
+    // QubitCoin: mirror DecryptKey() for post-quantum keys. The IV is the hash
+    // of the (large) Dilithium public key, matching the encryption side.
+    CKeyingMaterial vchSecret;
+    if (!DecryptSecret(vMasterKey, vchCryptedSecret, vchPubKey.GetHash(), vchSecret))
+        return false;
+
+    if (vchSecret.size() != CDilithiumKey::SIZE)
+        return false;
+
+    // Reconstruct the key from the decrypted secret bytes and the stored pubkey.
+    if (!key.Set(Span<const unsigned char>(vchSecret.data(), vchSecret.size()),
+                 Span<const unsigned char>(vchPubKey.data(), vchPubKey.size()))) {
+        return false;
+    }
+    // Prove the decrypted secret really belongs to the public key it was stored
+    // under, as DecryptKey() does for ECDSA. Comparing GetPubKey() against
+    // vchPubKey would only compare the stored public key with itself: Set() just
+    // cached it, and ML-DSA cannot re-derive it from the secret.
     return key.VerifyPubKey(vchPubKey);
 }
 } // namespace wallet

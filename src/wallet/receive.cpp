@@ -1,4 +1,4 @@
-// Copyright (c) 2021-2022 The Bitcoin Core developers
+// Copyright (c) 2021-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -63,9 +63,17 @@ bool ScriptIsChange(const CWallet& wallet, const CScript& script)
         CTxDestination address;
         if (!ExtractDestination(script, address))
             return true;
-        if (!wallet.FindAddressBookEntry(address)) {
-            return true;
+        if (wallet.FindAddressBookEntry(address)) {
+            return false;
         }
+        // ExtractDestination() returns DilithiumPKHash for P2PKH. Look up any
+        // leftover address-book entries that were stored as PKHash.
+        if (const auto* dil = std::get_if<DilithiumPKHash>(&address)) {
+            if (wallet.FindAddressBookEntry(PKHash(ToKeyID(*dil)))) {
+                return false;
+            }
+        }
+        return true;
     }
     return false;
 }

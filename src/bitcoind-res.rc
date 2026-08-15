@@ -14,13 +14,13 @@ BEGIN
     BEGIN
         BLOCK "040904E4" // U.S. English - multilingual (hex)
         BEGIN
-            VALUE "CompanyName",        "Bitcoin"
-            VALUE "FileDescription",    "bitcoind (Bitcoin node with a JSON-RPC server)"
+            VALUE "CompanyName",        "Yelpful Technologies"
+            VALUE "FileDescription",    "qbitcoind (QubitCoin node with a JSON-RPC server)"
             VALUE "FileVersion",        PACKAGE_VERSION
-            VALUE "InternalName",       "bitcoind"
+            VALUE "InternalName",       "qbitcoind"
             VALUE "LegalCopyright",     COPYRIGHT_STR
             VALUE "LegalTrademarks1",   "Distributed under the MIT software license, see the accompanying file COPYING or http://www.opensource.org/licenses/mit-license.php."
-            VALUE "OriginalFilename",   "bitcoind.exe"
+            VALUE "OriginalFilename",   "qbitcoind.exe"
             VALUE "ProductName",        "bitcoind"
             VALUE "ProductVersion",     PACKAGE_VERSION
         END

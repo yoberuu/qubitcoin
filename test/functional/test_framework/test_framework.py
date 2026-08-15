@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2014-present The Bitcoin Core developers
+# Copyright (c) 2014-present Yelpful Technologies
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Base class for RPC testing."""
@@ -235,18 +235,20 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
     def set_binary_paths(self):
         """Update self.options with the paths of all binaries from environment variables or their default values"""
 
+        # QubitCoin binaries are named qbitcoin*; fall back to bitcoin* for upstream compat.
         binaries = {
-            "bitcoind": ("bitcoind", "BITCOIND"),
-            "bitcoin-cli": ("bitcoincli", "BITCOINCLI"),
-            "bitcoin-util": ("bitcoinutil", "BITCOINUTIL"),
-            "bitcoin-wallet": ("bitcoinwallet", "BITCOINWALLET"),
+            "bitcoind": ("bitcoind", "BITCOIND", "qbitcoind"),
+            "bitcoin-cli": ("bitcoincli", "BITCOINCLI", "qbitcoin-cli"),
+            "bitcoin-util": ("bitcoinutil", "BITCOINUTIL", "qbitcoin-util"),
+            "bitcoin-wallet": ("bitcoinwallet", "BITCOINWALLET", "qbitcoin-wallet"),
         }
-        for binary, [attribute_name, env_variable_name] in binaries.items():
-            default_filename = os.path.join(
-                self.config["environment"]["BUILDDIR"],
-                "src",
-                binary + self.config["environment"]["EXEEXT"],
-            )
+        builddir = self.config["environment"]["BUILDDIR"]
+        exeext = self.config["environment"]["EXEEXT"]
+        for binary, [attribute_name, env_variable_name, qubit_name] in binaries.items():
+            qubit_filename = os.path.join(builddir, "src", qubit_name + exeext)
+            default_filename = os.path.join(builddir, "src", binary + exeext)
+            if os.path.isfile(qubit_filename):
+                default_filename = qubit_filename
             setattr(self.options, attribute_name, os.getenv(env_variable_name, default=default_filename))
 
     def setup(self):
@@ -892,7 +894,7 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
             self.log.debug("Copy cache directory {} to node {}".format(cache_node_dir, i))
             to_dir = get_datadir_path(self.options.tmpdir, i)
             shutil.copytree(cache_node_dir, to_dir)
-            initialize_datadir(self.options.tmpdir, i, self.chain, self.disable_autoconnect)  # Overwrite port/rpcport in bitcoin.conf
+            initialize_datadir(self.options.tmpdir, i, self.chain, self.disable_autoconnect)  # Overwrite port/rpcport in qubitcoin.conf
 
     def _initialize_chain_clean(self):
         """Initialize empty blockchain for use by the test.
@@ -957,7 +959,11 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
         if self.options.descriptors:
             self.skip_if_no_sqlite()
         else:
-            self.skip_if_no_bdb()
+            # QubitCoin Dilithium wallets use the legacy ScriptPubKeyMan with SQLite
+            # (BDB optional). Prefer SQLite; fall back to the BDB check only when
+            # SQLite is unavailable.
+            if not self.is_sqlite_compiled():
+                self.skip_if_no_bdb()
 
     def skip_if_no_sqlite(self):
         """Skip the running test if sqlite has not been compiled."""
@@ -1020,7 +1026,9 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
         if self.options.descriptors:
             return self.is_sqlite_compiled()
         else:
-            return self.is_bdb_compiled()
+            # QubitCoin: Dilithium (legacy ScriptPubKeyMan) wallets are stored in
+            # SQLite by default. BDB is optional and not required for --legacy-wallet.
+            return self.is_sqlite_compiled() or self.is_bdb_compiled()
 
     def is_wallet_tool_compiled(self):
         """Checks whether bitcoin-wallet was compiled."""

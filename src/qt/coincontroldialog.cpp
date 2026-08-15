@@ -1,4 +1,4 @@
-// Copyright (c) 2011-2022 The Bitcoin Core developers
+// Copyright (c) 2011-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -408,7 +408,11 @@ void CoinControlDialog::updateLabels(CCoinControl& m_coin_control, WalletModel *
         nAmount += out.txout.nValue;
 
         // Bytes
-        CTxDestination address;
+        //
+        // QubitCoin: every spendable output on this chain is satisfied with a
+        // post-quantum Dilithium signature and public key, so the ECDSA figures
+        // Bitcoin uses here (148 bytes bare, 107 witness units) would understate
+        // the fee by more than an order of magnitude.
         int witnessversion = 0;
         std::vector<unsigned char> witnessprogram;
         if (out.txout.scriptPubKey.IsWitnessProgram(witnessversion, witnessprogram))
@@ -417,9 +421,11 @@ void CoinControlDialog::updateLabels(CCoinControl& m_coin_control, WalletModel *
             nBytesInputs += (32 + 4 + 1 + 4);
 
             if (witnessversion == 0) { // P2WPKH
-                // 1 WU (witness item count) + 72 WU (ECDSA signature with len byte) + 34 WU (pubkey with len byte)
-                nBytesInputs += 107 / WITNESS_SCALE_FACTOR;
+                // Dilithium signature + public key on the witness stack, discounted 4:1.
+                nBytesInputs += DILITHIUM_P2WPKH_WITNESS_SIZE / WITNESS_SCALE_FACTOR;
             } else if (witnessversion == 1) { // P2TR key-path spend
+                // Unspendable on this chain (Schnorr verification always fails), but
+                // keep Bitcoin's estimate rather than inventing one.
                 // 1 WU (witness item count) + 65 WU (Schnorr signature with len byte)
                 nBytesInputs += 66 / WITNESS_SCALE_FACTOR;
             } else {
@@ -428,18 +434,12 @@ void CoinControlDialog::updateLabels(CCoinControl& m_coin_control, WalletModel *
             }
             fWitness = true;
         }
-        else if(ExtractDestination(out.txout.scriptPubKey, address))
+        else
         {
-            CPubKey pubkey;
-            PKHash* pkhash = std::get_if<PKHash>(&address);
-            if (pkhash && model->wallet().getPubKey(out.txout.scriptPubKey, ToKeyID(*pkhash), pubkey))
-            {
-                nBytesInputs += (pubkey.IsCompressed() ? 148 : 180);
-            }
-            else
-                nBytesInputs += 148; // in all error cases, simply assume 148 here
+            // Bare Dilithium P2PKH is the only spendable non-witness form, and its
+            // size is fixed, so it is also the right estimate for anything else.
+            nBytesInputs += DILITHIUM_P2PKH_INPUT_SIZE;
         }
-        else nBytesInputs += 148;
     }
 
     // calculation

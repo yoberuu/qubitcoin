@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2022 The Bitcoin Core developers
+// Copyright (c) 2019-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -274,6 +274,8 @@ static const std::unordered_set<OutputType> LEGACY_OUTPUT_TYPES {
     OutputType::LEGACY,
     OutputType::P2SH_SEGWIT,
     OutputType::BECH32,
+    //! QubitCoin: post-quantum Dilithium P2PKH-style addresses are served by the legacy SPKM.
+    OutputType::DILITHIUM,
 };
 
 class DescriptorScriptPubKeyMan;
@@ -286,8 +288,11 @@ protected:
     using WatchOnlySet = std::set<CScript>;
     using WatchKeyMap = std::map<CKeyID, CPubKey>;
     using CryptedKeyMap = std::map<CKeyID, std::pair<CPubKey, std::vector<unsigned char>>>;
+    //! QubitCoin: encrypted post-quantum Dilithium keys, mirroring CryptedKeyMap.
+    using DilithiumCryptedKeyMap = std::map<CKeyID, std::pair<CDilithiumPubKey, std::vector<unsigned char>>>;
 
     CryptedKeyMap mapCryptedKeys GUARDED_BY(cs_KeyStore);
+    DilithiumCryptedKeyMap mapDilithiumCryptedKeys GUARDED_BY(cs_KeyStore);
     WatchOnlySet setWatchOnly GUARDED_BY(cs_KeyStore);
     WatchKeyMap mapWatchKeys GUARDED_BY(cs_KeyStore);
 
@@ -295,12 +300,29 @@ protected:
     CHDChain m_hd_chain;
     std::unordered_map<CKeyID, CHDChain, SaltedSipHasher> m_inactive_hd_chains;
 
+    /**
+     * QubitCoin: post-quantum Dilithium HD seed state. New Dilithium keys are
+     * derived deterministically from m_dilithium_hd_seed via
+     * DeriveDilithiumChildSeed(seed, index), so backing up the seed recovers all
+     * Dilithium funds. When the wallet is encrypted the plaintext seed is not kept
+     * in memory; the encrypted blob + IV are stored instead and decrypted on demand.
+     */
+    bool m_dilithium_hd_seed_set GUARDED_BY(cs_KeyStore){false};
+    bool m_dilithium_hd_seed_encrypted GUARDED_BY(cs_KeyStore){false};
+    uint256 m_dilithium_hd_seed GUARDED_BY(cs_KeyStore);
+    uint256 m_dilithium_hd_seed_iv GUARDED_BY(cs_KeyStore);
+    std::vector<unsigned char> m_dilithium_hd_seed_crypted GUARDED_BY(cs_KeyStore);
+    uint32_t m_dilithium_hd_counter GUARDED_BY(cs_KeyStore){0};
+
     //! keeps track of whether Unlock has run a thorough check before
     bool fDecryptionThoroughlyChecked = true;
 
     bool AddWatchOnlyInMem(const CScript &dest);
     virtual bool AddKeyPubKeyInner(const CKey& key, const CPubKey &pubkey);
     bool AddCryptedKeyInner(const CPubKey &vchPubKey, const std::vector<unsigned char> &vchCryptedSecret);
+    //! QubitCoin: post-quantum analogues of AddKeyPubKeyInner / AddCryptedKeyInner.
+    virtual bool AddDilithiumKeyInner(const CDilithiumKey& key);
+    bool AddDilithiumCryptedKeyInner(const CDilithiumPubKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret);
 
 public:
     using ScriptPubKeyMan::ScriptPubKeyMan;
@@ -325,6 +347,11 @@ public:
     bool GetPubKey(const CKeyID &address, CPubKey& vchPubKeyOut) const override;
     bool GetKeyOrigin(const CKeyID& keyid, KeyOriginInfo& info) const override;
 
+    // QubitCoin: post-quantum Dilithium key lookups (encryption-aware).
+    bool HaveDilithiumKey(const CKeyID& address) const override;
+    bool GetDilithiumKey(const CKeyID& address, CDilithiumKey& keyOut) const override;
+    bool GetDilithiumPubKey(const CKeyID& address, CDilithiumPubKey& pubkeyOut) const override;
+
     std::set<int64_t> setInternalKeyPool GUARDED_BY(cs_KeyStore);
     std::set<int64_t> setExternalKeyPool GUARDED_BY(cs_KeyStore);
     std::set<int64_t> set_pre_split_keypool GUARDED_BY(cs_KeyStore);
@@ -345,6 +372,18 @@ public:
     bool LoadKey(const CKey& key, const CPubKey &pubkey);
     //! Adds an encrypted key to the store, without saving it to disk (used by LoadWallet)
     bool LoadCryptedKey(const CPubKey &vchPubKey, const std::vector<unsigned char> &vchCryptedSecret, bool checksum_valid);
+    //! QubitCoin: adds a post-quantum Dilithium key to the store, without saving it (used by LoadWallet)
+    bool LoadDilithiumKey(const CDilithiumKey& key);
+    //! QubitCoin: adds an encrypted Dilithium key to the store, without saving it (used by LoadWallet)
+    bool LoadDilithiumCryptedKey(const CDilithiumPubKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret, bool checksum_valid);
+    //! QubitCoin: load the plaintext / encrypted Dilithium HD seed (used by LoadWallet)
+    void LoadDilithiumHDSeed(const uint256& seed, uint32_t counter);
+    void LoadDilithiumHDSeedCrypted(const uint256& iv, const std::vector<unsigned char>& crypted, uint32_t counter);
+    //! QubitCoin: whether this wallet has a Dilithium HD seed.
+    bool HasDilithiumHDSeed() const;
+    //! QubitCoin: fetch the plaintext master seed, decrypting if necessary. Returns
+    //! false if there is no seed or the wallet is locked (cannot decrypt).
+    bool GetDilithiumHDSeed(uint256& seed_out) const;
     //! Adds a CScript to the store
     bool LoadCScript(const CScript& redeemScript);
     //! Load a HD chain model (used by LoadWallet)
@@ -383,6 +422,8 @@ private:
     int64_t m_keypool_size GUARDED_BY(cs_KeyStore){DEFAULT_KEYPOOL_SIZE};
 
     bool AddKeyPubKeyInner(const CKey& key, const CPubKey &pubkey) override;
+    //! QubitCoin: encryption-aware inner add for post-quantum Dilithium keys.
+    bool AddDilithiumKeyInner(const CDilithiumKey& key) override;
 
     /**
      * Private version of AddWatchOnly method which does not accept a
@@ -400,6 +441,16 @@ private:
 
     //! Adds a key to the store, and saves it to disk.
     bool AddKeyPubKeyWithDB(WalletBatch &batch,const CKey& key, const CPubKey &pubkey) EXCLUSIVE_LOCKS_REQUIRED(cs_KeyStore);
+
+    //! QubitCoin: adds a post-quantum Dilithium key to the store, and saves it to disk.
+    bool AddDilithiumKeyWithDB(WalletBatch& batch, const CDilithiumKey& key) EXCLUSIVE_LOCKS_REQUIRED(cs_KeyStore);
+
+    /** QubitCoin: generate the next Dilithium key and return its P2PKH-style
+     * destination. Keys are derived deterministically from the wallet's Dilithium
+     * HD seed and a monotonically increasing child counter (see
+     * DeriveDilithiumChildSeed), so they are recoverable from a single seed backup.
+     * They do not use the (now unused) ECDSA keypool. */
+    util::Result<CTxDestination> GenerateNewDilithiumDestination() EXCLUSIVE_LOCKS_REQUIRED(cs_KeyStore);
 
     void AddKeypoolPubkeyWithDB(const CPubKey& pubkey, const bool internal, WalletBatch& batch);
 
@@ -497,6 +548,10 @@ public:
     bool AddKeyPubKey(const CKey& key, const CPubKey &pubkey) override;
     //! Adds an encrypted key to the store, and saves it to disk.
     bool AddCryptedKey(const CPubKey &vchPubKey, const std::vector<unsigned char> &vchCryptedSecret);
+    //! QubitCoin: adds a post-quantum Dilithium key to the store, and saves it to disk.
+    bool AddDilithiumKey(const CDilithiumKey& key) override;
+    //! QubitCoin: adds an encrypted Dilithium key to the store, and saves it to disk.
+    bool AddDilithiumCryptedKey(const CDilithiumPubKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret);
     void UpdateTimeFirstKey(int64_t nCreateTime) EXCLUSIVE_LOCKS_REQUIRED(cs_KeyStore);
     //! Load metadata (used by LoadWallet)
     void LoadKeyMetadata(const CKeyID& keyID, const CKeyMetadata &metadata) override;
@@ -524,6 +579,13 @@ public:
 
     /* Returns true if the wallet can generate new keys */
     bool CanGenerateKeys() const;
+
+    /**
+     * QubitCoin: create and persist a fresh random post-quantum Dilithium HD seed
+     * (if one does not already exist). New wallets use this instead of an ECDSA HD
+     * seed + ECDSA keypool. Returns true if a seed is available afterwards.
+     */
+    bool SetupDilithiumHDSeed(WalletBatch& batch) EXCLUSIVE_LOCKS_REQUIRED(cs_KeyStore);
 
     /* Generates a new HD seed (will not be activated) */
     CPubKey GenerateNewSeed();
@@ -578,6 +640,10 @@ public:
     bool GetKey(const CKeyID &address, CKey& key) const override { return false; }
     bool HaveKey(const CKeyID &address) const override { return false; }
     bool GetKeyOrigin(const CKeyID& keyid, KeyOriginInfo& info) const override { return m_spk_man.GetKeyOrigin(keyid, info); }
+    // QubitCoin: expose post-quantum public keys (but never private keys) for RPCs like getaddressinfo.
+    bool GetDilithiumPubKey(const CKeyID& address, CDilithiumPubKey& pubkey) const override { return m_spk_man.GetDilithiumPubKey(address, pubkey); }
+    bool GetDilithiumKey(const CKeyID& address, CDilithiumKey& key) const override { return false; }
+    bool HaveDilithiumKey(const CKeyID& address) const override { return m_spk_man.HaveDilithiumKey(address); }
 };
 
 class DescriptorScriptPubKeyMan : public ScriptPubKeyMan

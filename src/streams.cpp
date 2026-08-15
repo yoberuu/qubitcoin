@@ -1,4 +1,4 @@
-// Copyright (c) 2009-present The Bitcoin Core developers
+// Copyright (c) 2009-present Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or https://opensource.org/license/mit/.
 

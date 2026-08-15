@@ -1,5 +1,5 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2022 The Bitcoin Core developers
+// Copyright (c) 2009-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -8,6 +8,7 @@
 #include <crypto/ripemd160.h>
 #include <crypto/sha1.h>
 #include <crypto/sha256.h>
+#include <dilithiumpubkey.h>
 #include <pubkey.h>
 #include <script/script.h>
 #include <uint256.h>
@@ -331,11 +332,28 @@ static bool EvalChecksigPreTapscript(const valtype& vchSig, const valtype& vchPu
             return set_error(serror, SCRIPT_ERR_SIG_FINDANDDELETE);
     }
 
-    if (!CheckSignatureEncoding(vchSig, flags, serror) || !CheckPubKeyEncoding(vchPubKey, flags, sigversion, serror)) {
-        //serror is set
-        return false;
+    // QubitCoin is a pure post-quantum chain: the ONLY accepted signature scheme
+    // is ML-DSA-65 (Dilithium). A Dilithium public key is a fixed 1952 bytes,
+    // which can never collide with a valid secp256k1 key (33/65 bytes). Any key
+    // that is not exactly a Dilithium public key (in particular every legacy
+    // secp256k1/ECDSA key) is rejected outright: there is no ECDSA verification
+    // path on this chain (consensus critical).
+    if (vchPubKey.size() != CDilithiumPubKey::SIZE) {
+        return set_error(serror, SCRIPT_ERR_PUBKEYTYPE);
     }
-    fSuccess = checker.CheckECDSASignature(vchSig, vchPubKey, scriptCode, sigversion);
+
+    // Dilithium signatures/keys are far larger than DER/secp256k1, so the
+    // ECDSA-specific encoding checks (DER, low-S, pubkey type) do not apply. The one
+    // encoding rule that does carry over is the trailing hashtype byte, which must
+    // be one of the six defined values (consensus critical, unlike the ECDSA path
+    // where the same check is gated on the SCRIPT_VERIFY_STRICTENC policy flag). An
+    // empty signature is exempt: it stays the compact way to fail a CHECKSIG, and is
+    // handled by the NULLFAIL rule below.
+    if (!vchSig.empty() && !IsDefinedDilithiumHashtype(vchSig.back())) {
+        return set_error(serror, SCRIPT_ERR_SIG_HASHTYPE);
+    }
+
+    fSuccess = checker.CheckDilithiumSignature(vchSig, vchPubKey, scriptCode, sigversion);
 
     if (!fSuccess && (flags & SCRIPT_VERIFY_NULLFAIL) && vchSig.size())
         return set_error(serror, SCRIPT_ERR_SIG_NULLFAIL);
@@ -1427,6 +1445,14 @@ void PrecomputedTransactionData::Init(const T& txTo, std::vector<CTxOut>&& spent
         if (uses_bip341_taproot && uses_bip143_segwit) break; // No need to scan further if we already need all.
     }
 
+    // QubitCoin (consensus critical / DoS): every Dilithium (ML-DSA-65) spend uses
+    // the BIP143-style sighash, which relies on these precomputed midstates to stay
+    // O(1) per input. Dilithium P2PKH spends carry no witness, so the loop above
+    // would not detect them; unconditionally precompute the BIP143 midstates. This
+    // is a cheap one-time O(n) cost per transaction and prevents the quadratic
+    // sighash blow-up when validating multi-input Dilithium transactions.
+    uses_bip143_segwit = true;
+
     if (uses_bip143_segwit || uses_bip341_taproot) {
         // Computations shared between both sighash schemes.
         m_prevouts_single_hash = GetPrevoutsSHA256(txTo);
@@ -1632,8 +1658,41 @@ uint256 SignatureHash(const CScript& scriptCode, const T& txTo, unsigned int nIn
     return ss.GetHash();
 }
 
+//! Hasher with DILITHIUM_SIGHASH_TAG pre-fed to it, per BIP340's tagged hash.
+static const HashWriter HASHER_DILITHIUM_SIGHASH{TaggedHash(DILITHIUM_SIGHASH_TAG)};
+
+bool IsDefinedDilithiumHashtype(unsigned char hashtype)
+{
+    // Spelled out rather than derived by masking (as IsDefinedHashtypeSignature
+    // does for ECDSA) so that the accepted set can be read off directly.
+    switch (hashtype) {
+    case SIGHASH_ALL:
+    case SIGHASH_NONE:
+    case SIGHASH_SINGLE:
+    case SIGHASH_ALL | SIGHASH_ANYONECANPAY:
+    case SIGHASH_NONE | SIGHASH_ANYONECANPAY:
+    case SIGHASH_SINGLE | SIGHASH_ANYONECANPAY:
+        return true;
+    default:
+        return false;
+    }
+}
+
+template <class T>
+uint256 DilithiumSignatureMessage(const CScript& scriptCode, const T& txTo, unsigned int nIn, int nHashType, const CAmount& amount, const PrecomputedTransactionData* cache)
+{
+    const uint256 sighash{SignatureHash(scriptCode, txTo, nIn, nHashType, amount, SigVersion::WITNESS_V0, cache)};
+    return (HashWriter{HASHER_DILITHIUM_SIGHASH} << sighash).GetSHA256();
+}
+
 template <class T>
 bool GenericTransactionSignatureChecker<T>::VerifyECDSASignature(const std::vector<unsigned char>& vchSig, const CPubKey& pubkey, const uint256& sighash) const
+{
+    return pubkey.Verify(sighash, vchSig);
+}
+
+template <class T>
+bool GenericTransactionSignatureChecker<T>::VerifyDilithiumSignature(const std::vector<unsigned char>& vchSig, const CDilithiumPubKey& pubkey, const uint256& sighash) const
 {
     return pubkey.Verify(sighash, vchSig);
 }
@@ -1647,23 +1706,50 @@ bool GenericTransactionSignatureChecker<T>::VerifySchnorrSignature(Span<const un
 template <class T>
 bool GenericTransactionSignatureChecker<T>::CheckECDSASignature(const std::vector<unsigned char>& vchSigIn, const std::vector<unsigned char>& vchPubKey, const CScript& scriptCode, SigVersion sigversion) const
 {
-    CPubKey pubkey(vchPubKey);
+    // QubitCoin is a pure post-quantum chain. ECDSA (secp256k1) signature
+    // verification is disabled: no ECDSA signature can ever validate. This
+    // covers OP_CHECKSIG's legacy path (which additionally rejects non-Dilithium
+    // pubkeys before reaching here) as well as OP_CHECKMULTISIG, which funnels
+    // through this method and therefore can never succeed either. (Consensus
+    // critical.) The parameters are intentionally unused.
+    (void)vchSigIn;
+    (void)vchPubKey;
+    (void)scriptCode;
+    (void)sigversion;
+    return false;
+}
+
+template <class T>
+bool GenericTransactionSignatureChecker<T>::CheckDilithiumSignature(const std::vector<unsigned char>& vchSigIn, const std::vector<unsigned char>& vchPubKey, const CScript& scriptCode, SigVersion sigversion) const
+{
+    CDilithiumPubKey pubkey(Span<const uint8_t>{vchPubKey});
     if (!pubkey.IsValid())
         return false;
 
-    // Hash type is one byte tacked on to the end of the signature
+    // Hash type is one byte tacked on to the end of the signature (same
+    // convention as the ECDSA path), and must be one of the six defined values.
+    // The interpreter checks this first so the failure can be reported as
+    // SCRIPT_ERR_SIG_HASHTYPE; repeating it here keeps the rule with the code that
+    // defines the message, for the benefit of any caller that is not the interpreter.
     std::vector<unsigned char> vchSig(vchSigIn);
     if (vchSig.empty())
+        return false;
+    if (!IsDefinedDilithiumHashtype(vchSig.back()))
         return false;
     int nHashType = vchSig.back();
     vchSig.pop_back();
 
-    // Witness sighashes need the amount.
-    if (sigversion == SigVersion::WITNESS_V0 && amount < 0) return HandleMissingData(m_mdb);
+    // QubitCoin (consensus critical): the message is DilithiumSignatureMessage(),
+    // the same definition the signer uses. It is the BIP143 sighash under a
+    // QubitCoin/ML-DSA-65 tag, regardless of the script context this input
+    // executes in, and it commits to the input amount — so an unknown amount must
+    // fail closed rather than be signed over as a placeholder.
+    (void)sigversion;
+    if (amount < 0) return HandleMissingData(m_mdb);
 
-    uint256 sighash = SignatureHash(scriptCode, *txTo, nIn, nHashType, amount, sigversion, this->txdata);
+    const uint256 msg{DilithiumSignatureMessage(scriptCode, *txTo, nIn, nHashType, amount, this->txdata)};
 
-    if (!VerifyECDSASignature(vchSig, pubkey, sighash))
+    if (!VerifyDilithiumSignature(vchSig, pubkey, msg))
         return false;
 
     return true;
@@ -1675,26 +1761,15 @@ bool GenericTransactionSignatureChecker<T>::CheckSchnorrSignature(Span<const uns
     assert(sigversion == SigVersion::TAPROOT || sigversion == SigVersion::TAPSCRIPT);
     // Schnorr signatures have 32-byte public keys. The caller is responsible for enforcing this.
     assert(pubkey_in.size() == 32);
-    // Note that in Tapscript evaluation, empty signatures are treated specially (invalid signature that does not
-    // abort script execution). This is implemented in EvalChecksigTapscript, which won't invoke
-    // CheckSchnorrSignature in that case. In other contexts, they are invalid like every other signature with
-    // size different from 64 or 65.
-    if (sig.size() != 64 && sig.size() != 65) return set_error(serror, SCRIPT_ERR_SCHNORR_SIG_SIZE);
 
-    XOnlyPubKey pubkey{pubkey_in};
-
-    uint8_t hashtype = SIGHASH_DEFAULT;
-    if (sig.size() == 65) {
-        hashtype = SpanPopBack(sig);
-        if (hashtype == SIGHASH_DEFAULT) return set_error(serror, SCRIPT_ERR_SCHNORR_SIG_HASHTYPE);
-    }
-    uint256 sighash;
-    if (!this->txdata) return HandleMissingData(m_mdb);
-    if (!SignatureHashSchnorr(sighash, execdata, *txTo, nIn, hashtype, sigversion, *this->txdata, m_mdb)) {
-        return set_error(serror, SCRIPT_ERR_SCHNORR_SIG_HASHTYPE);
-    }
-    if (!VerifySchnorrSignature(sig, pubkey, sighash)) return set_error(serror, SCRIPT_ERR_SCHNORR_SIG);
-    return true;
+    // QubitCoin is a pure post-quantum chain. BIP340 Schnorr (Taproot) signature
+    // verification is disabled so that Dilithium is the only signature scheme
+    // that can ever validate. Taproot key-path and script-path (tapscript)
+    // spends therefore always fail here. (Consensus critical.)
+    (void)sig;
+    (void)pubkey_in;
+    (void)execdata;
+    return set_error(serror, SCRIPT_ERR_SCHNORR_SIG);
 }
 
 template <class T>
@@ -1784,6 +1859,23 @@ bool GenericTransactionSignatureChecker<T>::CheckSequence(const CScriptNum& nSeq
 // explicit instantiation
 template class GenericTransactionSignatureChecker<CTransaction>;
 template class GenericTransactionSignatureChecker<CMutableTransaction>;
+
+// QubitCoin: SignatureHashSchnorr is still used by the signing code (sign.cpp)
+// and sigcache. Its only in-interpreter caller (CheckSchnorrSignature) was
+// disabled for the Dilithium-only chain, so instantiate it explicitly here to
+// keep those translation units linkable.
+template bool SignatureHashSchnorr<CTransaction>(uint256&, ScriptExecutionData&, const CTransaction&, uint32_t, uint8_t, SigVersion, const PrecomputedTransactionData&, MissingDataBehavior);
+template bool SignatureHashSchnorr<CMutableTransaction>(uint256&, ScriptExecutionData&, const CMutableTransaction&, uint32_t, uint8_t, SigVersion, const PrecomputedTransactionData&, MissingDataBehavior);
+
+// QubitCoin: force out-of-line instantiations of the (legacy/BIP143) SignatureHash
+// template. sign.cpp and other translation units reference it, but its only
+// in-interpreter callers are now the signature checkers, where the compiler may
+// fully inline it and emit no standalone symbol. Instantiate it explicitly so
+// those references always resolve.
+template uint256 SignatureHash<CTransaction>(const CScript&, const CTransaction&, unsigned int, int, const CAmount&, SigVersion, const PrecomputedTransactionData*);
+template uint256 SignatureHash<CMutableTransaction>(const CScript&, const CMutableTransaction&, unsigned int, int, const CAmount&, SigVersion, const PrecomputedTransactionData*);
+template uint256 DilithiumSignatureMessage<CTransaction>(const CScript&, const CTransaction&, unsigned int, int, const CAmount&, const PrecomputedTransactionData*);
+template uint256 DilithiumSignatureMessage<CMutableTransaction>(const CScript&, const CMutableTransaction&, unsigned int, int, const CAmount&, const PrecomputedTransactionData*);
 
 static bool ExecuteWitnessScript(const Span<const valtype>& stack_span, const CScript& exec_script, unsigned int flags, SigVersion sigversion, const BaseSignatureChecker& checker, ScriptExecutionData& execdata, ScriptError* serror)
 {

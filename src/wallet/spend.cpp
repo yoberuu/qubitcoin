@@ -1,4 +1,4 @@
-// Copyright (c) 2021-2022 The Bitcoin Core developers
+// Copyright (c) 2021-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -8,6 +8,8 @@
 #include <common/system.h>
 #include <consensus/amount.h>
 #include <consensus/validation.h>
+#include <crypto/dilithium.h>
+#include <dilithiumpubkey.h>
 #include <interfaces/chain.h>
 #include <node/types.h>
 #include <numeric>
@@ -40,7 +42,11 @@ static constexpr size_t OUTPUT_GROUP_MAX_ENTRIES{100};
 
 /** Whether the descriptor represents, directly or not, a witness program. */
 static bool IsSegwit(const Descriptor& desc) {
-    if (const auto typ = desc.GetOutputType()) return *typ != OutputType::LEGACY;
+    if (const auto typ = desc.GetOutputType()) {
+        // Dilithium P2PKH is the same 25-byte bare script as LEGACY. Treating it
+        // as segwit would add a marker/flag and an empty witness stack byte.
+        return *typ != OutputType::LEGACY && *typ != OutputType::DILITHIUM;
+    }
     return false;
 }
 
@@ -82,9 +88,65 @@ static std::optional<int64_t> MaxInputWeight(const Descriptor& desc, const std::
     return {};
 }
 
+/**
+ * QubitCoin: maximum signed weight of an input spending a post-quantum Dilithium
+ * (ML-DSA-65) output, or std::nullopt if the script is not a Dilithium output we
+ * can solve.
+ *
+ * A Dilithium address uses the *same* on-chain script templates as an ECDSA
+ * address: bare P2PKH (OP_DUP OP_HASH160 <hash> OP_EQUALVERIFY OP_CHECKSIG) or
+ * witness v0 keyhash over the same key hash. The descriptor engine has no
+ * Dilithium key type, so the descriptor-based estimator (InferDescriptor +
+ * MaxInputWeight) sees an unsolvable pkh()/wpkh()/addr() and gives up, which is
+ * what previously made these inputs report solvable=false and broke fee
+ * estimation for sendtoaddress/fundrawtransaction.
+ *
+ * Detect the Dilithium case directly via the signing provider and measure a dummy
+ * input built exactly the way the real signer builds it (see
+ * SignStep()/ProduceSignature()): signature then public key, in the scriptSig for
+ * the bare form and on the witness stack for the witness form. Both are worst
+ * case as well as typical, since ML-DSA-65 signatures and keys are fixed length.
+ */
+static std::optional<int64_t> MaxDilithiumSignedInputWeight(const SigningProvider& provider, const CScript& script_pubkey,
+                                                            const bool tx_is_segwit)
+{
+    std::vector<std::vector<unsigned char>> solutions;
+    const TxoutType type{Solver(script_pubkey, solutions)};
+    const bool is_witness{type == TxoutType::WITNESS_V0_KEYHASH};
+    if (type != TxoutType::PUBKEYHASH && !is_witness) return std::nullopt;
+
+    CDilithiumPubKey dpubkey;
+    if (!provider.GetDilithiumPubKey(CKeyID(uint160(solutions[0])), dpubkey)) return std::nullopt;
+
+    // The signer pushes the ML-DSA-65 signature plus the one sighash-type byte it
+    // appends, then the public key.
+    const std::vector<unsigned char> dummy_sig(DILITHIUM_SIG_ELEMENT_SIZE, 0);
+    const std::vector<unsigned char> pubkey_bytes(dpubkey.begin(), dpubkey.end());
+
+    CTxIn txin;
+    if (is_witness) {
+        txin.scriptWitness.stack = {dummy_sig, pubkey_bytes};
+        // Accounts for the witness bytes and their 4:1 discount, so this comes out
+        // ~3.9x lighter than the bare form below.
+        return GetTransactionInputWeight(txin);
+    }
+    txin.scriptSig << dummy_sig << pubkey_bytes;
+    // A bare spend carries no witness, but still serializes an empty witness stack
+    // count byte if any other input in the transaction is a witness spend.
+    return static_cast<int64_t>(::GetSerializeSize(txin)) * WITNESS_SCALE_FACTOR + (tx_is_segwit ? 1 : 0);
+}
+
 int CalculateMaximumSignedInputSize(const CTxOut& txout, const COutPoint outpoint, const SigningProvider* provider, bool can_grind_r, const CCoinControl* coin_control)
 {
     if (!provider) return -1;
+
+    // QubitCoin: post-quantum Dilithium inputs are not representable as a descriptor,
+    // so handle them before falling back to the descriptor-based estimator. This
+    // per-coin estimate has no transaction context; a bare spend is sized as if the
+    // transaction had no witness input, which is the shape this wallet builds.
+    if (const auto dweight = MaxDilithiumSignedInputWeight(*provider, txout.scriptPubKey, /*tx_is_segwit=*/false)) {
+        return static_cast<int>(GetVirtualTransactionSize(*dweight, 0, 0));
+    }
 
     if (const auto desc = InferDescriptor(txout.scriptPubKey, *provider)) {
         if (const auto weight = MaxInputWeight(*desc, {}, coin_control, true, can_grind_r)) {
@@ -126,6 +188,12 @@ static std::optional<int64_t> GetSignedTxinWeight(const CWallet* wallet, const C
         return weight.value();
     }
 
+    // QubitCoin: post-quantum Dilithium inputs cannot be modelled by a descriptor,
+    // so compute their weight directly.
+    if (const std::unique_ptr<SigningProvider> provider = wallet->GetSolvingProvider(txo.scriptPubKey)) {
+        if (const auto dweight = MaxDilithiumSignedInputWeight(*provider, txo.scriptPubKey, tx_is_segwit)) return dweight;
+    }
+
     // Otherwise, use the maximum satisfaction size provided by the descriptor.
     std::unique_ptr<Descriptor> desc{GetDescriptor(wallet, coin_control, txo.scriptPubKey)};
     if (desc) return MaxInputWeight(*desc, {txin}, coin_control, tx_is_segwit, can_grind_r);
@@ -141,6 +209,12 @@ TxSize CalculateMaximumSignedTxSize(const CTransaction &tx, const CWallet *walle
     // Whether any input spends a witness program. Necessary to run before the next loop over the
     // inputs in order to accurately compute the compactSize length for the witness data per input.
     bool is_segwit = std::any_of(txouts.begin(), txouts.end(), [&](const CTxOut& txo) {
+        // QubitCoin: a witness Dilithium coin has no descriptor representation, so
+        // ask the script directly. Spending any witness program produces a witness,
+        // whether or not a descriptor could be inferred for it.
+        int witnessversion;
+        std::vector<unsigned char> witnessprogram;
+        if (txo.scriptPubKey.IsWitnessProgram(witnessversion, witnessprogram)) return true;
         std::unique_ptr<Descriptor> desc{GetDescriptor(wallet, coin_control, txo.scriptPubKey)};
         if (desc) return IsSegwit(*desc);
         return false;
@@ -1085,10 +1159,12 @@ static util::Result<CreatedTransactionResult> CreateTransactionInternal(
 
     // Get size of spending the change output
     int change_spend_size = CalculateMaximumSignedInputSize(change_prototype_txout, &wallet, /*coin_control=*/nullptr);
-    // If the wallet doesn't know how to sign change output, assume p2sh-p2wpkh
-    // as lower-bound to allow BnB to do it's thing
+    // If the wallet doesn't know how to sign the change output, fall back to the
+    // cheapest post-quantum spend form as a lower bound to allow BnB to do its
+    // thing. Bitcoin's p2sh-p2wpkh lower bound (91 vB) is ~15x too small on this
+    // chain, which would make change look far cheaper to spend than it is.
     if (change_spend_size == -1) {
-        coin_selection_params.change_spend_size = DUMMY_NESTED_P2WPKH_INPUT_SIZE;
+        coin_selection_params.change_spend_size = DILITHIUM_P2WPKH_INPUT_VSIZE;
     } else {
         coin_selection_params.change_spend_size = change_spend_size;
     }

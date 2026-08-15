@@ -1,4 +1,4 @@
-// Copyright (c) 2016-2022 The Bitcoin Core developers
+// Copyright (c) 2016-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -13,6 +13,7 @@
 #include <wallet/salvage.h>
 #include <wallet/wallet.h>
 #include <wallet/walletutil.h>
+#include <outputtype.h>
 
 namespace wallet {
 namespace WalletTool {
@@ -103,6 +104,7 @@ static void WalletShowInfo(CWallet* wallet_instance)
     tfm::format(std::cout, "Name: %s\n", wallet_instance->GetName());
     tfm::format(std::cout, "Format: %s\n", wallet_instance->GetDatabase().Format());
     tfm::format(std::cout, "Descriptors: %s\n", wallet_instance->IsWalletFlagSet(WALLET_FLAG_DESCRIPTORS) ? "yes" : "no");
+    tfm::format(std::cout, "Default address type: %s\n", FormatOutputType(wallet_instance->m_default_address_type));
     tfm::format(std::cout, "Encrypted: %s\n", wallet_instance->IsCrypted() ? "yes" : "no");
     tfm::format(std::cout, "HD (hd seed available): %s\n", wallet_instance->IsHDEnabled() ? "yes" : "no");
     tfm::format(std::cout, "Keypool Size: %u\n", wallet_instance->GetKeyPoolSize());
@@ -139,16 +141,20 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
         DatabaseOptions options;
         ReadDatabaseArgs(args, options);
         options.require_create = true;
-        // If -legacy is set, use it. Otherwise default to false.
-        bool make_legacy = args.GetBoolArg("-legacy", false);
-        // If neither -legacy nor -descriptors is set, default to true. If -descriptors is set, use its value.
-        bool make_descriptors = (!args.IsArgSet("-descriptors") && !args.IsArgSet("-legacy")) || (args.IsArgSet("-descriptors") && args.GetBoolArg("-descriptors", true));
-        if (make_legacy && make_descriptors) {
+        // QubitCoin: legacy (Dilithium-capable) wallets are the default. Pass
+        // -descriptors to create a descriptor wallet (ECDSA-only, not for normal use).
+        bool make_descriptors = args.IsArgSet("-descriptors") && args.GetBoolArg("-descriptors", true);
+        bool make_legacy = !make_descriptors;
+        if (args.IsArgSet("-legacy")) {
+            make_legacy = args.GetBoolArg("-legacy", true);
+            if (make_legacy) make_descriptors = false;
+        }
+        if (make_descriptors && make_legacy) {
             tfm::format(std::cerr, "Only one of -legacy or -descriptors can be set to true, not both\n");
             return false;
         }
         if (!make_legacy && !make_descriptors) {
-            tfm::format(std::cerr, "One of -legacy or -descriptors must be set to true (or omitted)\n");
+            tfm::format(std::cerr, "One of -legacy or -descriptors must be set to true (or omitted to use the Dilithium-capable legacy default)\n");
             return false;
         }
         if (make_descriptors) {

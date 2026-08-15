@@ -1,5 +1,5 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2022 The Bitcoin Core developers
+// Copyright (c) 2009-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -19,6 +19,7 @@
 #include <vector>
 
 class CPubKey;
+class CDilithiumPubKey;
 class CScript;
 class CScriptNum;
 class XOnlyPubKey;
@@ -242,10 +243,77 @@ extern const HashWriter HASHER_TAPBRANCH;  //!< Hasher with tag "TapBranch" pre-
 template <class T>
 uint256 SignatureHash(const CScript& scriptCode, const T& txTo, unsigned int nIn, int nHashType, const CAmount& amount, SigVersion sigversion, const PrecomputedTransactionData* cache = nullptr);
 
+/**
+ * QubitCoin: the domain-separation tag for what an ML-DSA-65 key signs when
+ * spending. Normative and consensus critical: changing this string invalidates
+ * every signature on the chain. It follows the naming of the wallet's HD
+ * derivation label ("QBTC-ML-DSA-65-HD") so that all QubitCoin domain labels read
+ * alike, and it names the scheme as well as the chain, so a second post-quantum
+ * scheme would get its own domain rather than inheriting this one.
+ */
+inline constexpr const char* DILITHIUM_SIGHASH_TAG{"QBTC-ML-DSA-65-SIGHASH"};
+
+/**
+ * QubitCoin (consensus critical): the 32-byte message an ML-DSA-65 signature
+ * commits to for input `nIn`. Both the signer (`CreateDilithiumSig`) and the
+ * verifier (`CheckDilithiumSignature`) must obtain it from here — the two only
+ * agree because there is one definition.
+ *
+ * It is the BIP143 sighash wrapped in a BIP340-style tagged hash:
+ *
+ *     SHA256(SHA256(tag) || SHA256(tag) || SignatureHash(..., WITNESS_V0, ...))
+ *
+ * with `tag` = DILITHIUM_SIGHASH_TAG. Two properties, both deliberate:
+ *
+ * - **BIP143 always**, whatever script context the input executes in. The legacy
+ *   (SigVersion::BASE) algorithm re-serializes the whole transaction per input,
+ *   making validation O(n^2); BIP143 reuses the precomputed hashPrevouts /
+ *   hashSequence / hashOutputs midstates that PrecomputedTransactionData::Init
+ *   builds unconditionally for this reason, so each input costs O(1). BIP143 also
+ *   commits to the input amount, so a caller that does not know it must fail
+ *   closed rather than pass a placeholder.
+ * - **Tagged**, so the signed message lives in a domain no other scheme can
+ *   reach. The inner digest is byte-identical to Bitcoin's BIP143, so untagged it
+ *   would be a digest an ECDSA or Schnorr signer over the same transaction could
+ *   also be asked to produce. The tag makes the message unambiguously "a
+ *   QubitCoin ML-DSA-65 spend" and nothing else.
+ */
+template <class T>
+uint256 DilithiumSignatureMessage(const CScript& scriptCode, const T& txTo, unsigned int nIn, int nHashType, const CAmount& amount, const PrecomputedTransactionData* cache = nullptr);
+
+/**
+ * QubitCoin (consensus critical): may an ML-DSA-65 signature carry this trailing
+ * hashtype byte? Exactly six of the 256 values are defined —
+ *
+ *     SIGHASH_ALL, SIGHASH_NONE, SIGHASH_SINGLE,
+ *     and each of those with SIGHASH_ANYONECANPAY set (0x81, 0x82, 0x83)
+ *
+ * — and nothing else is accepted. The byte is committed inside the BIP143 sighash,
+ * so an undefined value was never third-party malleable, but it did leave 250
+ * distinct signatures per spend that a *signer* could produce, all equivalent in
+ * effect: SIGHASH_ALL and, say, 0x21 both mean "sign everything", because
+ * SignatureHash() only ever inspects the low five bits and the ANYONECANPAY bit.
+ * Rejecting them removes that redundancy and reserves the undefined values, so a
+ * future sighash mode can be given a meaning rather than having to be rescued from
+ * one it already had.
+ *
+ * Both the signer (`CreateDilithiumSig`) and the interpreter consult this, so the
+ * two cannot drift apart on what is signable versus verifiable.
+ */
+bool IsDefinedDilithiumHashtype(unsigned char hashtype);
+
 class BaseSignatureChecker
 {
 public:
     virtual bool CheckECDSASignature(const std::vector<unsigned char>& scriptSig, const std::vector<unsigned char>& vchPubKey, const CScript& scriptCode, SigVersion sigversion) const
+    {
+        return false;
+    }
+
+    //! Verify a post-quantum ML-DSA-65 (Dilithium) signature. QubitCoin is a
+    //! pure-Dilithium chain; this is the primary signature scheme for new
+    //! transactions. Distinguished from ECDSA by the (large) public key size.
+    virtual bool CheckDilithiumSignature(const std::vector<unsigned char>& scriptSig, const std::vector<unsigned char>& vchPubKey, const CScript& scriptCode, SigVersion sigversion) const
     {
         return false;
     }
@@ -292,12 +360,14 @@ private:
 
 protected:
     virtual bool VerifyECDSASignature(const std::vector<unsigned char>& vchSig, const CPubKey& vchPubKey, const uint256& sighash) const;
+    virtual bool VerifyDilithiumSignature(const std::vector<unsigned char>& vchSig, const CDilithiumPubKey& pubkey, const uint256& sighash) const;
     virtual bool VerifySchnorrSignature(Span<const unsigned char> sig, const XOnlyPubKey& pubkey, const uint256& sighash) const;
 
 public:
     GenericTransactionSignatureChecker(const T* txToIn, unsigned int nInIn, const CAmount& amountIn, MissingDataBehavior mdb) : txTo(txToIn), m_mdb(mdb), nIn(nInIn), amount(amountIn), txdata(nullptr) {}
     GenericTransactionSignatureChecker(const T* txToIn, unsigned int nInIn, const CAmount& amountIn, const PrecomputedTransactionData& txdataIn, MissingDataBehavior mdb) : txTo(txToIn), m_mdb(mdb), nIn(nInIn), amount(amountIn), txdata(&txdataIn) {}
     bool CheckECDSASignature(const std::vector<unsigned char>& scriptSig, const std::vector<unsigned char>& vchPubKey, const CScript& scriptCode, SigVersion sigversion) const override;
+    bool CheckDilithiumSignature(const std::vector<unsigned char>& scriptSig, const std::vector<unsigned char>& vchPubKey, const CScript& scriptCode, SigVersion sigversion) const override;
     bool CheckSchnorrSignature(Span<const unsigned char> sig, Span<const unsigned char> pubkey, SigVersion sigversion, ScriptExecutionData& execdata, ScriptError* serror = nullptr) const override;
     bool CheckLockTime(const CScriptNum& nLockTime) const override;
     bool CheckSequence(const CScriptNum& nSequence) const override;
@@ -317,6 +387,11 @@ public:
     bool CheckECDSASignature(const std::vector<unsigned char>& scriptSig, const std::vector<unsigned char>& vchPubKey, const CScript& scriptCode, SigVersion sigversion) const override
     {
         return m_checker.CheckECDSASignature(scriptSig, vchPubKey, scriptCode, sigversion);
+    }
+
+    bool CheckDilithiumSignature(const std::vector<unsigned char>& scriptSig, const std::vector<unsigned char>& vchPubKey, const CScript& scriptCode, SigVersion sigversion) const override
+    {
+        return m_checker.CheckDilithiumSignature(scriptSig, vchPubKey, scriptCode, sigversion);
     }
 
     bool CheckSchnorrSignature(Span<const unsigned char> sig, Span<const unsigned char> pubkey, SigVersion sigversion, ScriptExecutionData& execdata, ScriptError* serror = nullptr) const override

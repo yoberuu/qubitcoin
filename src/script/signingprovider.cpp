@@ -1,5 +1,5 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2022 The Bitcoin Core developers
+// Copyright (c) 2009-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -44,6 +44,17 @@ bool HidingSigningProvider::GetKeyOrigin(const CKeyID& keyid, KeyOriginInfo& inf
     return m_provider->GetKeyOrigin(keyid, info);
 }
 
+bool HidingSigningProvider::GetDilithiumPubKey(const CKeyID& keyid, CDilithiumPubKey& pubkey) const
+{
+    return m_provider->GetDilithiumPubKey(keyid, pubkey);
+}
+
+bool HidingSigningProvider::GetDilithiumKey(const CKeyID& keyid, CDilithiumKey& key) const
+{
+    if (m_hide_secret) return false;
+    return m_provider->GetDilithiumKey(keyid, key);
+}
+
 bool HidingSigningProvider::GetTaprootSpendData(const XOnlyPubKey& output_key, TaprootSpendData& spenddata) const
 {
     return m_provider->GetTaprootSpendData(output_key, spenddata);
@@ -63,6 +74,8 @@ bool FlatSigningProvider::GetKeyOrigin(const CKeyID& keyid, KeyOriginInfo& info)
     return ret;
 }
 bool FlatSigningProvider::GetKey(const CKeyID& keyid, CKey& key) const { return LookupHelper(keys, keyid, key); }
+bool FlatSigningProvider::GetDilithiumPubKey(const CKeyID& keyid, CDilithiumPubKey& pubkey) const { return LookupHelper(dilithium_pubkeys, keyid, pubkey); }
+bool FlatSigningProvider::GetDilithiumKey(const CKeyID& keyid, CDilithiumKey& key) const { return LookupHelper(dilithium_keys, keyid, key); }
 bool FlatSigningProvider::GetTaprootSpendData(const XOnlyPubKey& output_key, TaprootSpendData& spenddata) const
 {
     TaprootBuilder builder;
@@ -82,6 +95,8 @@ FlatSigningProvider& FlatSigningProvider::Merge(FlatSigningProvider&& b)
     scripts.merge(b.scripts);
     pubkeys.merge(b.pubkeys);
     keys.merge(b.keys);
+    dilithium_pubkeys.merge(b.dilithium_pubkeys);
+    dilithium_keys.merge(b.dilithium_keys);
     origins.merge(b.origins);
     tr_trees.merge(b.tr_trees);
     return *this;
@@ -155,6 +170,51 @@ bool FillableSigningProvider::GetKey(const CKeyID &address, CKey &keyOut) const
     return false;
 }
 
+bool FillableSigningProvider::AddDilithiumKey(const CDilithiumKey& key)
+{
+    if (!key.IsValid()) return false;
+    LOCK(cs_KeyStore);
+    mapDilithiumKeys[key.GetPubKey().GetID()] = key;
+    return true;
+}
+
+bool FillableSigningProvider::HaveDilithiumKey(const CKeyID& address) const
+{
+    LOCK(cs_KeyStore);
+    return mapDilithiumKeys.count(address) > 0;
+}
+
+bool FillableSigningProvider::GetDilithiumKey(const CKeyID& address, CDilithiumKey& keyOut) const
+{
+    LOCK(cs_KeyStore);
+    auto mi = mapDilithiumKeys.find(address);
+    if (mi != mapDilithiumKeys.end()) {
+        keyOut = mi->second;
+        return true;
+    }
+    return false;
+}
+
+bool FillableSigningProvider::GetDilithiumPubKey(const CKeyID& address, CDilithiumPubKey& pubkeyOut) const
+{
+    CDilithiumKey key;
+    if (!GetDilithiumKey(address, key)) {
+        return false;
+    }
+    pubkeyOut = key.GetPubKey();
+    return true;
+}
+
+std::set<CKeyID> FillableSigningProvider::GetDilithiumKeyIDs() const
+{
+    LOCK(cs_KeyStore);
+    std::set<CKeyID> set_address;
+    for (const auto& mi : mapDilithiumKeys) {
+        set_address.insert(mi.first);
+    }
+    return set_address;
+}
+
 bool FillableSigningProvider::AddCScript(const CScript& redeemScript)
 {
     if (redeemScript.size() > MAX_SCRIPT_ELEMENT_SIZE) {
@@ -201,6 +261,9 @@ CKeyID GetKeyForDestination(const SigningProvider& store, const CTxDestination& 
     // P2PKH, P2WPKH, P2SH-P2WPKH, P2TR
     if (auto id = std::get_if<PKHash>(&dest)) {
         return ToKeyID(*id);
+    }
+    if (auto dilithium_id = std::get_if<DilithiumPKHash>(&dest)) {
+        return ToKeyID(*dilithium_id);
     }
     if (auto witness_id = std::get_if<WitnessV0KeyHash>(&dest)) {
         return ToKeyID(*witness_id);
@@ -262,6 +325,22 @@ bool MultiSigningProvider::GetKey(const CKeyID& keyid, CKey& key) const
 {
     for (const auto& provider: m_providers) {
         if (provider->GetKey(keyid, key)) return true;
+    }
+    return false;
+}
+
+bool MultiSigningProvider::GetDilithiumPubKey(const CKeyID& keyid, CDilithiumPubKey& pubkey) const
+{
+    for (const auto& provider : m_providers) {
+        if (provider->GetDilithiumPubKey(keyid, pubkey)) return true;
+    }
+    return false;
+}
+
+bool MultiSigningProvider::GetDilithiumKey(const CKeyID& keyid, CDilithiumKey& key) const
+{
+    for (const auto& provider : m_providers) {
+        if (provider->GetDilithiumKey(keyid, key)) return true;
     }
     return false;
 }

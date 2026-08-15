@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2022 The Bitcoin Core developers
+// Copyright (c) 2019-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -254,8 +254,7 @@ void CreateWalletActivity::createWallet()
 
     std::string name = m_create_wallet_dialog->walletName().toStdString();
     uint64_t flags = 0;
-    // Enable descriptors by default.
-    flags |= WALLET_FLAG_DESCRIPTORS;
+    // QubitCoin: legacy (Dilithium-capable) wallets are the default.
     if (m_create_wallet_dialog->isDisablePrivateKeysChecked()) {
         flags |= WALLET_FLAG_DISABLE_PRIVATE_KEYS;
     }

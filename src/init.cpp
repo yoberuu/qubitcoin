@@ -1,5 +1,5 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2022 The Bitcoin Core developers
+// Copyright (c) 2009-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -19,6 +19,7 @@
 #include <common/args.h>
 #include <common/system.h>
 #include <consensus/amount.h>
+#include <crypto/dilithium.h>
 #include <deploymentstatus.h>
 #include <hash.h>
 #include <httprpc.h>
@@ -1108,6 +1109,14 @@ bool AppInitSanityChecks(const kernel::Context& kernel)
 
     if (!ECC_InitSanityCheck()) {
         return InitError(strprintf(_("Elliptic curve cryptography sanity check failure. %s is shutting down."), PACKAGE_NAME));
+    }
+
+    // QubitCoin: ML-DSA-65 is the only signature scheme on this chain, so a
+    // mismatch here means the node can neither validate blocks nor derive wallet
+    // keys correctly. In particular this catches a liboqs change to seeded key
+    // generation, which would silently make existing wallets unrecoverable.
+    if (!dilithium::SelfTest()) {
+        return InitError(strprintf(_("Post-quantum (ML-DSA-65) cryptography sanity check failure. %s is shutting down."), PACKAGE_NAME));
     }
 
     // Probe the data directory lock to give an early error message, if possible

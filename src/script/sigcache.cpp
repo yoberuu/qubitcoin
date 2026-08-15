@@ -1,11 +1,12 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2022 The Bitcoin Core developers
+// Copyright (c) 2009-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <script/sigcache.h>
 
 #include <crypto/sha256.h>
+#include <dilithiumpubkey.h>
 #include <logging.h>
 #include <pubkey.h>
 #include <random.h>
@@ -26,10 +27,14 @@ SignatureCache::SignatureCache(const size_t max_size_bytes)
     // 'S' for Schnorr (followed by 0 bytes).
     static constexpr unsigned char PADDING_ECDSA[32] = {'E'};
     static constexpr unsigned char PADDING_SCHNORR[32] = {'S'};
+    static constexpr unsigned char PADDING_DILITHIUM[32] = {'D'};
     m_salted_hasher_ecdsa.Write(nonce.begin(), 32);
     m_salted_hasher_ecdsa.Write(PADDING_ECDSA, 32);
     m_salted_hasher_schnorr.Write(nonce.begin(), 32);
     m_salted_hasher_schnorr.Write(PADDING_SCHNORR, 32);
+    // QubitCoin: domain-separate post-quantum Dilithium cache entries.
+    m_salted_hasher_dilithium.Write(nonce.begin(), 32);
+    m_salted_hasher_dilithium.Write(PADDING_DILITHIUM, 32);
 
     const auto [num_elems, approx_size_bytes] = setValid.setup_bytes(max_size_bytes);
     LogPrintf("Using %zu MiB out of %zu MiB requested for signature cache, able to store %zu elements\n",
@@ -45,6 +50,12 @@ void SignatureCache::ComputeEntryECDSA(uint256& entry, const uint256& hash, cons
 void SignatureCache::ComputeEntrySchnorr(uint256& entry, const uint256& hash, Span<const unsigned char> sig, const XOnlyPubKey& pubkey) const
 {
     CSHA256 hasher = m_salted_hasher_schnorr;
+    hasher.Write(hash.begin(), 32).Write(pubkey.data(), pubkey.size()).Write(sig.data(), sig.size()).Finalize(entry.begin());
+}
+
+void SignatureCache::ComputeEntryDilithium(uint256& entry, const uint256& hash, Span<const unsigned char> sig, const CDilithiumPubKey& pubkey) const
+{
+    CSHA256 hasher = m_salted_hasher_dilithium;
     hasher.Write(hash.begin(), 32).Write(pubkey.data(), pubkey.size()).Write(sig.data(), sig.size()).Finalize(entry.begin());
 }
 
@@ -80,5 +91,22 @@ bool CachingTransactionSignatureChecker::VerifySchnorrSignature(Span<const unsig
     if (m_signature_cache.Get(entry, !store)) return true;
     if (!TransactionSignatureChecker::VerifySchnorrSignature(sig, pubkey, sighash)) return false;
     if (store) m_signature_cache.Set(entry);
+    return true;
+}
+
+bool CachingTransactionSignatureChecker::VerifyDilithiumSignature(const std::vector<unsigned char>& vchSig, const CDilithiumPubKey& pubkey, const uint256& sighash) const
+{
+    // QubitCoin: post-quantum Dilithium (ML-DSA-65) verification is even more
+    // expensive than ECDSA/Schnorr, so caching is critical for DoS resistance:
+    // a signature validated on mempool acceptance is not re-validated when the
+    // same transaction is later connected in a block.
+    uint256 entry;
+    m_signature_cache.ComputeEntryDilithium(entry, sighash, vchSig, pubkey);
+    if (m_signature_cache.Get(entry, !store))
+        return true;
+    if (!TransactionSignatureChecker::VerifyDilithiumSignature(vchSig, pubkey, sighash))
+        return false;
+    if (store)
+        m_signature_cache.Set(entry);
     return true;
 }

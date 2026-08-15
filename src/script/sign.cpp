@@ -1,11 +1,13 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2022 The Bitcoin Core developers
+// Copyright (c) 2009-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <script/sign.h>
 
 #include <consensus/amount.h>
+#include <dilithiumkey.h>
+#include <dilithiumpubkey.h>
 #include <key.h>
 #include <policy/policy.h>
 #include <primitives/transaction.h>
@@ -54,6 +56,38 @@ bool MutableTransactionSignatureCreator::CreateSig(const SigningProvider& provid
 
     uint256 hash = SignatureHash(scriptCode, m_txto, nIn, hashtype, amount, sigversion, m_txdata);
     if (!key.Sign(hash, vchSig))
+        return false;
+    vchSig.push_back((unsigned char)hashtype);
+    return true;
+}
+
+bool MutableTransactionSignatureCreator::CreateDilithiumSig(const SigningProvider& provider, std::vector<unsigned char>& vchSig, const CKeyID& address, const CScript& scriptCode, SigVersion sigversion) const
+{
+    assert(sigversion == SigVersion::BASE || sigversion == SigVersion::WITNESS_V0);
+
+    CDilithiumKey key;
+    if (!provider.GetDilithiumKey(address, key))
+        return false;
+
+    // BASE/WITNESS_V0 signatures don't support explicit SIGHASH_DEFAULT, use SIGHASH_ALL instead.
+    const int hashtype = nHashType == SIGHASH_DEFAULT ? SIGHASH_ALL : nHashType;
+
+    // Refuse to produce a signature the interpreter would refuse to accept. Callers
+    // reach here through ParseSighashString or with SIGHASH_ALL, so this should be
+    // unreachable; it is here so that signing and verifying share one notion of a
+    // valid hashtype rather than agreeing by coincidence. The range check is part of
+    // that: only the low byte is appended to the signature, so a hashtype that does
+    // not fit in one byte would be signed over as one value and verified as another.
+    if (hashtype < 0 || hashtype > 0xff || !IsDefinedDilithiumHashtype(hashtype)) return false;
+
+    // QubitCoin: what a Dilithium key signs is defined once, in
+    // DilithiumSignatureMessage() — a tagged BIP143 sighash, independent of the
+    // script context, which is why the incoming sigversion is ignored here. BIP143
+    // commits to the input amount, so a valid amount must be provided by the signer
+    // (real wallet flows always do).
+    (void)sigversion;
+    const uint256 msg{DilithiumSignatureMessage(scriptCode, m_txto, nIn, hashtype, amount, m_txdata)};
+    if (!key.Sign(msg, vchSig))
         return false;
     vchSig.push_back((unsigned char)hashtype);
     return true;
@@ -127,6 +161,26 @@ static bool GetPubKey(const SigningProvider& provider, const SignatureData& sigd
     }
     // Query the underlying provider
     return provider.GetPubKey(address, pubkey);
+}
+
+//! QubitCoin: look up a post-quantum Dilithium public key for a key hash.
+static bool GetDilithiumPubKey(const SigningProvider& provider, const CKeyID& address, CDilithiumPubKey& pubkey)
+{
+    return provider.GetDilithiumPubKey(address, pubkey);
+}
+
+//! QubitCoin: produce a Dilithium signature for the given public key. This is
+//! the post-quantum analogue of the CreateSig() helper below. It does not use
+//! sigdata.signatures (which stores CPubKey-based partial sigs); Dilithium sigs
+//! are produced fresh here, which is sufficient for single-sig P2PKH spends.
+static bool CreateDilithiumSig(const BaseSignatureCreator& creator, SignatureData& sigdata, const SigningProvider& provider, std::vector<unsigned char>& sig_out, const CDilithiumPubKey& pubkey, const CScript& scriptcode, SigVersion sigversion)
+{
+    CKeyID keyid = pubkey.GetID();
+    if (creator.CreateDilithiumSig(provider, sig_out, keyid, scriptcode, sigversion)) {
+        return true;
+    }
+    sigdata.missing_sigs.push_back(keyid);
+    return false;
 }
 
 static bool CreateSig(const BaseSignatureCreator& creator, SignatureData& sigdata, const SigningProvider& provider, std::vector<unsigned char>& sig_out, const CPubKey& pubkey, const CScript& scriptcode, SigVersion sigversion)
@@ -420,15 +474,25 @@ static bool SignStep(const SigningProvider& provider, const BaseSignatureCreator
     case TxoutType::PUBKEYHASH: {
         CKeyID keyID = CKeyID(uint160(vSolutions[0]));
         CPubKey pubkey;
-        if (!GetPubKey(provider, sigdata, keyID, pubkey)) {
-            // Pubkey could not be found, add to missing
-            sigdata.missing_pubkeys.push_back(keyID);
-            return false;
+        if (GetPubKey(provider, sigdata, keyID, pubkey)) {
+            if (!CreateSig(creator, sigdata, provider, sig, pubkey, scriptPubKey, sigversion)) return false;
+            ret.push_back(std::move(sig));
+            ret.push_back(ToByteVector(pubkey));
+            return true;
         }
-        if (!CreateSig(creator, sigdata, provider, sig, pubkey, scriptPubKey, sigversion)) return false;
-        ret.push_back(std::move(sig));
-        ret.push_back(ToByteVector(pubkey));
-        return true;
+        // QubitCoin: the key hash may instead correspond to a post-quantum
+        // Dilithium key. The on-chain script is the same P2PKH template; only
+        // the pushed public key (1952 bytes) and signature differ.
+        CDilithiumPubKey dpubkey;
+        if (GetDilithiumPubKey(provider, keyID, dpubkey)) {
+            if (!CreateDilithiumSig(creator, sigdata, provider, sig, dpubkey, scriptPubKey, sigversion)) return false;
+            ret.push_back(std::move(sig));
+            ret.emplace_back(dpubkey.begin(), dpubkey.end());
+            return true;
+        }
+        // Pubkey could not be found, add to missing
+        sigdata.missing_pubkeys.push_back(keyID);
+        return false;
     }
     case TxoutType::SCRIPTHASH: {
         uint160 h160{vSolutions[0]};
@@ -756,6 +820,15 @@ public:
     bool CreateSchnorrSig(const SigningProvider& provider, std::vector<unsigned char>& sig, const XOnlyPubKey& pubkey, const uint256* leaf_hash, const uint256* tweak, SigVersion sigversion) const override
     {
         sig.assign(64, '\000');
+        return true;
+    }
+    bool CreateDilithiumSig(const SigningProvider& provider, std::vector<unsigned char>& vchSig, const CKeyID& keyid, const CScript& scriptCode, SigVersion sigversion) const override
+    {
+        // QubitCoin: a dummy ML-DSA-65 signature at the maximum length plus the one
+        // trailing sighash-type byte. This lets solvability checks and PSBT size
+        // estimation account for post-quantum inputs without the private key.
+        vchSig.assign(dilithium::SIGNATURE_MAX_SIZE + 1, '\000');
+        vchSig.back() = SIGHASH_ALL;
         return true;
     }
 };

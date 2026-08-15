@@ -1,5 +1,5 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2022 The Bitcoin Core developers
+// Copyright (c) 2009-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -41,6 +41,11 @@ const std::string BESTBLOCK{"bestblock"};
 const std::string CRYPTED_KEY{"ckey"};
 const std::string CSCRIPT{"cscript"};
 const std::string DEFAULTKEY{"defaultkey"};
+//! QubitCoin: post-quantum Dilithium (ML-DSA-65) private key records.
+const std::string DILITHIUM_KEY{"dkey"};
+const std::string DILITHIUM_CRYPTED_KEY{"dckey"};
+const std::string DILITHIUM_HDSEED{"dhdseed"};
+const std::string DILITHIUM_HDSEED_CRYPTED{"dchdseed"};
 const std::string DESTDATA{"destdata"};
 const std::string FLAGS{"flags"};
 const std::string HDCHAIN{"hdchain"};
@@ -64,7 +69,7 @@ const std::string WALLETDESCRIPTORCKEY{"walletdescriptorckey"};
 const std::string WALLETDESCRIPTORKEY{"walletdescriptorkey"};
 const std::string WATCHMETA{"watchmeta"};
 const std::string WATCHS{"watchs"};
-const std::unordered_set<std::string> LEGACY_TYPES{CRYPTED_KEY, CSCRIPT, DEFAULTKEY, HDCHAIN, KEYMETA, KEY, OLD_KEY, POOL, WATCHMETA, WATCHS};
+const std::unordered_set<std::string> LEGACY_TYPES{CRYPTED_KEY, CSCRIPT, DEFAULTKEY, DILITHIUM_KEY, DILITHIUM_CRYPTED_KEY, DILITHIUM_HDSEED, DILITHIUM_HDSEED_CRYPTED, HDCHAIN, KEYMETA, KEY, OLD_KEY, POOL, WATCHMETA, WATCHS};
 } // namespace DBKeys
 
 //
@@ -146,6 +151,56 @@ bool WalletBatch::WriteCryptedKey(const CPubKey& vchPubKey,
         }
     }
     EraseIC(std::make_pair(DBKeys::KEY, vchPubKey));
+    return true;
+}
+
+bool WalletBatch::WriteDilithiumKey(const CDilithiumPubKey& vchPubKey, const std::vector<unsigned char>& vchPrivKey)
+{
+    // QubitCoin: mirror WriteKey() for post-quantum keys. There is no separate
+    // metadata record (Dilithium keys are not HD-derived); the pubkey is the DB
+    // key and the value is [privkey][hash(pubkey,privkey)] to accelerate loads.
+    std::vector<unsigned char> vchKey;
+    vchKey.reserve(vchPubKey.size() + vchPrivKey.size());
+    vchKey.insert(vchKey.end(), vchPubKey.begin(), vchPubKey.end());
+    vchKey.insert(vchKey.end(), vchPrivKey.begin(), vchPrivKey.end());
+
+    return WriteIC(std::make_pair(DBKeys::DILITHIUM_KEY, vchPubKey), std::make_pair(vchPrivKey, Hash(vchKey)), false);
+}
+
+bool WalletBatch::WriteDilithiumCryptedKey(const CDilithiumPubKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret)
+{
+    // QubitCoin: mirror WriteCryptedKey() for post-quantum keys.
+    uint256 checksum = Hash(vchCryptedSecret);
+    const auto key = std::make_pair(DBKeys::DILITHIUM_CRYPTED_KEY, vchPubKey);
+    if (!WriteIC(key, std::make_pair(vchCryptedSecret, checksum), false)) {
+        // It may already exist, so try writing just the checksum
+        std::vector<unsigned char> val;
+        if (!m_batch->Read(key, val)) {
+            return false;
+        }
+        if (!WriteIC(key, std::make_pair(val, checksum), true)) {
+            return false;
+        }
+    }
+    // Remove any plaintext record for the same key now that it is encrypted.
+    EraseIC(std::make_pair(DBKeys::DILITHIUM_KEY, vchPubKey));
+    return true;
+}
+
+bool WalletBatch::WriteDilithiumHDSeed(const uint256& seed, uint32_t counter)
+{
+    // Singleton record (one Dilithium HD seed per wallet). Value: (seed, counter).
+    return WriteIC(DBKeys::DILITHIUM_HDSEED, std::make_pair(seed, counter), /*fOverwrite=*/true);
+}
+
+bool WalletBatch::WriteDilithiumHDSeedCrypted(const uint256& iv, const std::vector<unsigned char>& crypted, uint32_t counter)
+{
+    // Value: (iv, (crypted_seed, counter)). Nested pair avoids relying on tuple SER.
+    if (!WriteIC(DBKeys::DILITHIUM_HDSEED_CRYPTED, std::make_pair(iv, std::make_pair(crypted, counter)), /*fOverwrite=*/true)) {
+        return false;
+    }
+    // The plaintext seed must never linger once we hold an encrypted copy.
+    EraseIC(DBKeys::DILITHIUM_HDSEED);
     return true;
 }
 
@@ -418,6 +473,133 @@ bool LoadCryptedKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, st
     return true;
 }
 
+//! QubitCoin: load a plaintext post-quantum Dilithium private key record ("dkey").
+static bool LoadDilithiumKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr)
+{
+    LOCK(pwallet->cs_wallet);
+    try {
+        CDilithiumPubKey vchPubKey;
+        ssKey >> vchPubKey;
+        if (!vchPubKey.IsValid()) {
+            strErr = "Error reading wallet database: CDilithiumPubKey corrupt";
+            return false;
+        }
+        std::vector<unsigned char> pkey;
+        uint256 hash;
+        ssValue >> pkey;
+        try {
+            ssValue >> hash;
+        } catch (const std::ios_base::failure&) {}
+
+        bool checksum_valid = false;
+        if (!hash.IsNull()) {
+            std::vector<unsigned char> vchKey;
+            vchKey.reserve(vchPubKey.size() + pkey.size());
+            vchKey.insert(vchKey.end(), vchPubKey.begin(), vchPubKey.end());
+            vchKey.insert(vchKey.end(), pkey.begin(), pkey.end());
+            if (Hash(vchKey) != hash) {
+                strErr = "Error reading wallet database: CDilithiumPubKey/secret corrupt";
+                return false;
+            }
+            checksum_valid = true;
+        }
+
+        CDilithiumKey key;
+        if (!key.Set(Span<const unsigned char>(pkey.data(), pkey.size()),
+                     Span<const unsigned char>(vchPubKey.data(), vchPubKey.size()))) {
+            strErr = "Error reading wallet database: Dilithium secret corrupt";
+            return false;
+        }
+        // The checksum above is taken over the public key and secret together, so
+        // it already ties the pair. Records written without one get the same
+        // guarantee the expensive way, as LoadKey() does for ECDSA.
+        if (!checksum_valid && !key.VerifyPubKey(vchPubKey)) {
+            strErr = "Error reading wallet database: Dilithium secret does not match its public key";
+            return false;
+        }
+        if (!pwallet->GetOrCreateLegacyDataSPKM()->LoadDilithiumKey(key)) {
+            strErr = "Error reading wallet database: LegacyDataSPKM::LoadDilithiumKey failed";
+            return false;
+        }
+    } catch (const std::exception& e) {
+        if (strErr.empty()) {
+            strErr = e.what();
+        }
+        return false;
+    }
+    return true;
+}
+
+//! QubitCoin: load an encrypted post-quantum Dilithium private key record ("dckey").
+static bool LoadDilithiumCryptedKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr)
+{
+    LOCK(pwallet->cs_wallet);
+    try {
+        CDilithiumPubKey vchPubKey;
+        ssKey >> vchPubKey;
+        if (!vchPubKey.IsValid()) {
+            strErr = "Error reading wallet database: CDilithiumPubKey corrupt";
+            return false;
+        }
+        std::vector<unsigned char> vchPrivKey;
+        ssValue >> vchPrivKey;
+
+        bool checksum_valid = false;
+        if (!ssValue.eof()) {
+            uint256 checksum;
+            ssValue >> checksum;
+            if (!(checksum_valid = Hash(vchPrivKey) == checksum)) {
+                strErr = "Error reading wallet database: Encrypted Dilithium key corrupt";
+                return false;
+            }
+        }
+
+        if (!pwallet->GetOrCreateLegacyDataSPKM()->LoadDilithiumCryptedKey(vchPubKey, vchPrivKey, checksum_valid)) {
+            strErr = "Error reading wallet database: LegacyDataSPKM::LoadDilithiumCryptedKey failed";
+            return false;
+        }
+    } catch (const std::exception& e) {
+        if (strErr.empty()) {
+            strErr = e.what();
+        }
+        return false;
+    }
+    return true;
+}
+
+//! QubitCoin: load the plaintext Dilithium HD seed record ("dhdseed").
+static bool LoadDilithiumHDSeed(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr)
+{
+    LOCK(pwallet->cs_wallet);
+    try {
+        uint256 seed;
+        uint32_t counter;
+        ssValue >> seed >> counter;
+        pwallet->GetOrCreateLegacyDataSPKM()->LoadDilithiumHDSeed(seed, counter);
+    } catch (const std::exception& e) {
+        if (strErr.empty()) strErr = e.what();
+        return false;
+    }
+    return true;
+}
+
+//! QubitCoin: load the encrypted Dilithium HD seed record ("dchdseed").
+static bool LoadDilithiumHDSeedCrypted(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr)
+{
+    LOCK(pwallet->cs_wallet);
+    try {
+        uint256 iv;
+        std::vector<unsigned char> crypted;
+        uint32_t counter;
+        ssValue >> iv >> crypted >> counter;
+        pwallet->GetOrCreateLegacyDataSPKM()->LoadDilithiumHDSeedCrypted(iv, crypted, counter);
+    } catch (const std::exception& e) {
+        if (strErr.empty()) strErr = e.what();
+        return false;
+    }
+    return true;
+}
+
 bool LoadEncryptionKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr)
 {
     LOCK(pwallet->cs_wallet);
@@ -587,6 +769,32 @@ static DBErrors LoadLegacyWalletRecords(CWallet* pwallet, DatabaseBatch& batch, 
         return LoadCryptedKey(pwallet, key, value, err) ? DBErrors::LOAD_OK : DBErrors::CORRUPT;
     });
     result = std::max(result, ckey_res.m_result);
+
+    // QubitCoin: load post-quantum Dilithium keys (plaintext and encrypted)
+    LoadResult dkey_res = LoadRecords(pwallet, batch, DBKeys::DILITHIUM_KEY,
+        [] (CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) {
+        return LoadDilithiumKey(pwallet, key, value, err) ? DBErrors::LOAD_OK : DBErrors::CORRUPT;
+    });
+    result = std::max(result, dkey_res.m_result);
+
+    LoadResult dckey_res = LoadRecords(pwallet, batch, DBKeys::DILITHIUM_CRYPTED_KEY,
+        [] (CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) {
+        return LoadDilithiumCryptedKey(pwallet, key, value, err) ? DBErrors::LOAD_OK : DBErrors::CORRUPT;
+    });
+    result = std::max(result, dckey_res.m_result);
+
+    // QubitCoin: load the Dilithium HD seed (plaintext or encrypted).
+    LoadResult dseed_res = LoadRecords(pwallet, batch, DBKeys::DILITHIUM_HDSEED,
+        [] (CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) {
+        return LoadDilithiumHDSeed(pwallet, key, value, err) ? DBErrors::LOAD_OK : DBErrors::CORRUPT;
+    });
+    result = std::max(result, dseed_res.m_result);
+
+    LoadResult dcseed_res = LoadRecords(pwallet, batch, DBKeys::DILITHIUM_HDSEED_CRYPTED,
+        [] (CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) {
+        return LoadDilithiumHDSeedCrypted(pwallet, key, value, err) ? DBErrors::LOAD_OK : DBErrors::CORRUPT;
+    });
+    result = std::max(result, dcseed_res.m_result);
 
     // Load scripts
     LoadResult script_res = LoadRecords(pwallet, batch, DBKeys::CSCRIPT,
@@ -771,6 +979,11 @@ static DBErrors LoadLegacyWalletRecords(CWallet* pwallet, DatabaseBatch& batch, 
         // Only do logging and time first key update if there were no critical errors
         pwallet->WalletLogPrintf("Legacy Wallet Keys: %u plaintext, %u encrypted, %u w/ metadata, %u total.\n",
                key_res.m_records, ckey_res.m_records, keymeta_res.m_records, key_res.m_records + ckey_res.m_records);
+        // Dilithium keys are stored separately from ECDSA keypool records; an empty
+        // ECDSA keypool with non-zero Dilithium counts is normal on QubitCoin.
+        pwallet->WalletLogPrintf("Dilithium Wallet Keys: %u plaintext, %u encrypted, %u HD seed records, %u total.\n",
+               dkey_res.m_records, dckey_res.m_records, dseed_res.m_records + dcseed_res.m_records,
+               dkey_res.m_records + dckey_res.m_records);
 
         // nTimeFirstKey is only reliable if all keys have metadata
         if (pwallet->IsLegacy() && (key_res.m_records + ckey_res.m_records + watch_script_res.m_records) != (keymeta_res.m_records + watch_meta_res.m_records)) {

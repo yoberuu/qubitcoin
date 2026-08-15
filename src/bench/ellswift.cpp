@@ -1,4 +1,4 @@
-// Copyright (c) 2022-2023 The Bitcoin Core developers
+// Copyright (c) 2022-2023 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 

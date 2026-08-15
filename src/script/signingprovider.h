@@ -1,5 +1,5 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2022 The Bitcoin Core developers
+// Copyright (c) 2009-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -8,6 +8,8 @@
 
 #include <addresstype.h>
 #include <attributes.h>
+#include <dilithiumkey.h>
+#include <dilithiumpubkey.h>
 #include <key.h>
 #include <pubkey.h>
 #include <script/keyorigin.h>
@@ -157,6 +159,11 @@ public:
     virtual bool GetKey(const CKeyID &address, CKey& key) const { return false; }
     virtual bool HaveKey(const CKeyID &address) const { return false; }
     virtual bool GetKeyOrigin(const CKeyID& keyid, KeyOriginInfo& info) const { return false; }
+    // QubitCoin post-quantum (Dilithium / ML-DSA-65) key lookups. Keyed by the
+    // same CKeyID scheme (Hash160 of the public key) as the ECDSA methods above.
+    virtual bool GetDilithiumPubKey(const CKeyID& address, CDilithiumPubKey& pubkey) const { return false; }
+    virtual bool GetDilithiumKey(const CKeyID& address, CDilithiumKey& key) const { return false; }
+    virtual bool HaveDilithiumKey(const CKeyID& address) const { return false; }
     virtual bool GetTaprootSpendData(const XOnlyPubKey& output_key, TaprootSpendData& spenddata) const { return false; }
     virtual bool GetTaprootBuilder(const XOnlyPubKey& output_key, TaprootBuilder& builder) const { return false; }
 
@@ -200,6 +207,8 @@ public:
     bool GetPubKey(const CKeyID& keyid, CPubKey& pubkey) const override;
     bool GetKey(const CKeyID& keyid, CKey& key) const override;
     bool GetKeyOrigin(const CKeyID& keyid, KeyOriginInfo& info) const override;
+    bool GetDilithiumPubKey(const CKeyID& keyid, CDilithiumPubKey& pubkey) const override;
+    bool GetDilithiumKey(const CKeyID& keyid, CDilithiumKey& key) const override;
     bool GetTaprootSpendData(const XOnlyPubKey& output_key, TaprootSpendData& spenddata) const override;
     bool GetTaprootBuilder(const XOnlyPubKey& output_key, TaprootBuilder& builder) const override;
 };
@@ -210,12 +219,16 @@ struct FlatSigningProvider final : public SigningProvider
     std::map<CKeyID, CPubKey> pubkeys;
     std::map<CKeyID, std::pair<CPubKey, KeyOriginInfo>> origins;
     std::map<CKeyID, CKey> keys;
+    std::map<CKeyID, CDilithiumPubKey> dilithium_pubkeys; //!< QubitCoin post-quantum public keys
+    std::map<CKeyID, CDilithiumKey> dilithium_keys;       //!< QubitCoin post-quantum private keys
     std::map<XOnlyPubKey, TaprootBuilder> tr_trees; /** Map from output key to Taproot tree (which can then make the TaprootSpendData */
 
     bool GetCScript(const CScriptID& scriptid, CScript& script) const override;
     bool GetPubKey(const CKeyID& keyid, CPubKey& pubkey) const override;
     bool GetKeyOrigin(const CKeyID& keyid, KeyOriginInfo& info) const override;
     bool GetKey(const CKeyID& keyid, CKey& key) const override;
+    bool GetDilithiumPubKey(const CKeyID& keyid, CDilithiumPubKey& pubkey) const override;
+    bool GetDilithiumKey(const CKeyID& keyid, CDilithiumKey& key) const override;
     bool GetTaprootSpendData(const XOnlyPubKey& output_key, TaprootSpendData& spenddata) const override;
     bool GetTaprootBuilder(const XOnlyPubKey& output_key, TaprootBuilder& builder) const override;
 
@@ -278,6 +291,12 @@ protected:
      */
     ScriptMap mapScripts GUARDED_BY(cs_KeyStore);
 
+    //! QubitCoin: post-quantum Dilithium private keys, indexed by CKeyID
+    //! (Hash160 of the Dilithium public key). Kept separate from mapKeys because
+    //! the key/pubkey types differ from secp256k1.
+    using DilithiumKeyMap = std::map<CKeyID, CDilithiumKey>;
+    DilithiumKeyMap mapDilithiumKeys GUARDED_BY(cs_KeyStore);
+
     void ImplicitlyLearnRelatedKeyScripts(const CPubKey& pubkey) EXCLUSIVE_LOCKS_REQUIRED(cs_KeyStore);
 
 public:
@@ -289,6 +308,12 @@ public:
     virtual bool HaveKey(const CKeyID &address) const override;
     virtual std::set<CKeyID> GetKeys() const;
     virtual bool GetKey(const CKeyID &address, CKey &keyOut) const override;
+    // QubitCoin post-quantum key management.
+    virtual bool AddDilithiumKey(const CDilithiumKey& key);
+    virtual bool HaveDilithiumKey(const CKeyID& address) const override;
+    virtual bool GetDilithiumKey(const CKeyID& address, CDilithiumKey& keyOut) const override;
+    virtual bool GetDilithiumPubKey(const CKeyID& address, CDilithiumPubKey& pubkeyOut) const override;
+    virtual std::set<CKeyID> GetDilithiumKeyIDs() const;
     virtual bool AddCScript(const CScript& redeemScript);
     virtual bool HaveCScript(const CScriptID &hash) const override;
     virtual std::set<CScriptID> GetCScripts() const;
@@ -309,6 +334,8 @@ public:
     bool GetPubKey(const CKeyID& keyid, CPubKey& pubkey) const override;
     bool GetKeyOrigin(const CKeyID& keyid, KeyOriginInfo& info) const override;
     bool GetKey(const CKeyID& keyid, CKey& key) const override;
+    bool GetDilithiumPubKey(const CKeyID& keyid, CDilithiumPubKey& pubkey) const override;
+    bool GetDilithiumKey(const CKeyID& keyid, CDilithiumKey& key) const override;
     bool GetTaprootSpendData(const XOnlyPubKey& output_key, TaprootSpendData& spenddata) const override;
     bool GetTaprootBuilder(const XOnlyPubKey& output_key, TaprootBuilder& builder) const override;
 };

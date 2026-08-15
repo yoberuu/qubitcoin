@@ -1,5 +1,5 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2022 The Bitcoin Core developers
+// Copyright (c) 2009-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -19,6 +19,7 @@
 #include <vector>
 
 class CPubKey;
+class CDilithiumPubKey;
 class CTransaction;
 class XOnlyPubKey;
 
@@ -38,9 +39,12 @@ static_assert(DEFAULT_VALIDATION_CACHE_BYTES == DEFAULT_SIGNATURE_CACHE_BYTES + 
 class SignatureCache
 {
 private:
-    //! Entries are SHA256(nonce || 'E' or 'S' || 31 zero bytes || signature hash || public key || signature):
+    //! Entries are SHA256(nonce || 'E'/'S'/'D' || 31 zero bytes || signature hash || public key || signature):
     CSHA256 m_salted_hasher_ecdsa;
     CSHA256 m_salted_hasher_schnorr;
+    //! QubitCoin: separate salted hasher for post-quantum Dilithium (ML-DSA-65)
+    //! signature-cache entries, domain-separated from ECDSA/Schnorr by 'D'.
+    CSHA256 m_salted_hasher_dilithium;
     typedef CuckooCache::cache<uint256, SignatureCacheHasher> map_type;
     map_type setValid;
     std::shared_mutex cs_sigcache;
@@ -54,6 +58,9 @@ public:
     void ComputeEntryECDSA(uint256& entry, const uint256 &hash, const std::vector<unsigned char>& vchSig, const CPubKey& pubkey) const;
 
     void ComputeEntrySchnorr(uint256& entry, const uint256 &hash, Span<const unsigned char> sig, const XOnlyPubKey& pubkey) const;
+
+    //! QubitCoin: compute the cache entry for a Dilithium (ML-DSA-65) signature.
+    void ComputeEntryDilithium(uint256& entry, const uint256 &hash, Span<const unsigned char> sig, const CDilithiumPubKey& pubkey) const;
 
     bool Get(const uint256& entry, const bool erase);
 
@@ -71,6 +78,8 @@ public:
 
     bool VerifyECDSASignature(const std::vector<unsigned char>& vchSig, const CPubKey& vchPubKey, const uint256& sighash) const override;
     bool VerifySchnorrSignature(Span<const unsigned char> sig, const XOnlyPubKey& pubkey, const uint256& sighash) const override;
+    //! QubitCoin: cache-backed post-quantum Dilithium (ML-DSA-65) verification.
+    bool VerifyDilithiumSignature(const std::vector<unsigned char>& vchSig, const CDilithiumPubKey& pubkey, const uint256& sighash) const override;
 };
 
 #endif // BITCOIN_SCRIPT_SIGCACHE_H

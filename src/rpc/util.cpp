@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2022 The Bitcoin Core developers
+// Copyright (c) 2017-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -186,7 +186,7 @@ std::string HelpExampleCliNamed(const std::string& methodname, const RPCArgList&
 std::string HelpExampleRpc(const std::string& methodname, const std::string& args)
 {
     return "> curl --user myusername --data-binary '{\"jsonrpc\": \"2.0\", \"id\": \"curltest\", "
-        "\"method\": \"" + methodname + "\", \"params\": [" + args + "]}' -H 'content-type: application/json' http://127.0.0.1:8332/\n";
+        "\"method\": \"" + methodname + "\", \"params\": [" + args + "]}' -H 'content-type: application/json' http://127.0.0.1:2095/\n";
 }
 
 std::string HelpExampleRpcNamed(const std::string& methodname, const RPCArgList& args)
@@ -197,7 +197,7 @@ std::string HelpExampleRpcNamed(const std::string& methodname, const RPCArgList&
     }
 
     return "> curl --user myusername --data-binary '{\"jsonrpc\": \"2.0\", \"id\": \"curltest\", "
-           "\"method\": \"" + methodname + "\", \"params\": " + params.write() + "}' -H 'content-type: application/json' http://127.0.0.1:8332/\n";
+           "\"method\": \"" + methodname + "\", \"params\": " + params.write() + "}' -H 'content-type: application/json' http://127.0.0.1:2095/\n";
 }
 
 // Converts a hex string to a public key if possible
@@ -294,6 +294,14 @@ public:
         return obj;
     }
 
+    UniValue operator()(const DilithiumPKHash& keyID) const
+    {
+        UniValue obj(UniValue::VOBJ);
+        obj.pushKV("isscript", false);
+        obj.pushKV("iswitness", false);
+        return obj;
+    }
+
     UniValue operator()(const ScriptHash& scriptID) const
     {
         UniValue obj(UniValue::VOBJ);
@@ -352,7 +360,24 @@ public:
 
 UniValue DescribeAddress(const CTxDestination& dest)
 {
-    return std::visit(DescribeAddressVisitor(), dest);
+    UniValue ret = std::visit(DescribeAddressVisitor(), dest);
+    // Report post-quantum-ness for every address type, not just the Dilithium
+    // one: on a Dilithium-only chain "false" is the answer that matters, since
+    // it means funds sent there are unspendable. Destinations that have no
+    // address at all describe nothing, and get no verdict either.
+    if (!ret.empty()) ret.pushKV("ispostquantum", IsDilithiumDestination(dest));
+    return ret;
+}
+
+void CheckDestinationIsSpendable(const CTxDestination& dest, const std::string& address)
+{
+    if (IsDilithiumDestination(dest)) return;
+    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
+                       strprintf("Address type is not supported on QubitCoin (Dilithium-only chain). "
+                                 "Sending to this address would burn the funds: %s is a %s address, "
+                                 "and no key that can exist on this chain is able to spend it. "
+                                 "Use a post-quantum Dilithium address.",
+                                 address, DestinationTypeName(dest)));
 }
 
 /**

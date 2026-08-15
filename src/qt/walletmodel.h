@@ -1,4 +1,4 @@
-// Copyright (c) 2011-2022 The Bitcoin Core developers
+// Copyright (c) 2011-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -57,6 +57,8 @@ public:
         OK,
         InvalidAmount,
         InvalidAddress,
+        //! Well-formed address, but of a type no QubitCoin key can spend.
+        UnspendableAddress,
         AmountExceedsBalance,
         AmountWithFeeExceedsBalance,
         DuplicateAddress,

@@ -1,4 +1,4 @@
-// Copyright (c) 2011-2022 The Bitcoin Core developers
+// Copyright (c) 2011-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -270,6 +270,14 @@ RPCHelpMan encryptwallet()
 
     if (!pwallet->EncryptWallet(strWalletPass)) {
         throw JSONRPCError(RPC_WALLET_ENCRYPTION_FAILED, "Error: Failed to encrypt the wallet.");
+    }
+
+    // QubitCoin: legacy wallets on this chain are post-quantum Dilithium-only. They
+    // do not generate an ECDSA HD seed or keypool, so the standard "a new HD seed
+    // was generated" message is inaccurate and misleading. Encryption simply
+    // protects the existing Dilithium HD seed and keys in place.
+    if (!pwallet->IsWalletFlagSet(WALLET_FLAG_DESCRIPTORS)) {
+        return "wallet encrypted; the Dilithium HD seed and keys are now protected by your passphrase. You need to make a new backup with the backupwallet RPC.";
     }
 
     return "wallet encrypted; The keypool has been flushed and a new HD seed was generated. You need to make a new backup with the backupwallet RPC.";

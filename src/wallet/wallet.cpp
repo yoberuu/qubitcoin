@@ -1,5 +1,5 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2022 The Bitcoin Core developers
+// Copyright (c) 2009-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -288,9 +288,9 @@ std::shared_ptr<CWallet> LoadWalletInternal(WalletContext& context, const std::s
             return nullptr;
         }
 
-        // Legacy wallets are being deprecated, warn if the loaded wallet is legacy
-        if (!wallet->IsWalletFlagSet(WALLET_FLAG_DESCRIPTORS)) {
-            warnings.push_back(_("Wallet loaded successfully. The legacy wallet type is being deprecated and support for creating and opening legacy wallets will be removed in the future. Legacy wallets can be migrated to a descriptor wallet with migratewallet."));
+        // QubitCoin: descriptor wallets cannot hold spendable Dilithium keys.
+        if (wallet->IsWalletFlagSet(WALLET_FLAG_DESCRIPTORS)) {
+            warnings.push_back(_("Wallet loaded successfully. Descriptor wallets on QubitCoin cannot hold spendable Dilithium keys; use a legacy wallet (the default) for normal post-quantum use."));
         }
 
         NotifyWalletLoaded(context, wallet);
@@ -481,9 +481,9 @@ std::shared_ptr<CWallet> CreateWallet(WalletContext& context, const std::string&
     // Write the wallet settings
     UpdateWalletSetting(*context.chain, name, load_on_start, warnings);
 
-    // Legacy wallets are being deprecated, warn if a newly created wallet is legacy
-    if (!(wallet_creation_flags & WALLET_FLAG_DESCRIPTORS)) {
-        warnings.push_back(_("Wallet created successfully. The legacy wallet type is being deprecated and support for creating and opening legacy wallets will be removed in the future."));
+    // QubitCoin: legacy wallets are the default and preferred type for Dilithium.
+    if (wallet_creation_flags & WALLET_FLAG_DESCRIPTORS) {
+        warnings.push_back(_("Wallet created successfully. Descriptor wallets on QubitCoin cannot hold spendable Dilithium keys; omit descriptors=true (the default) for normal post-quantum use."));
     }
 
     status = DatabaseStatus::SUCCESS;
@@ -3073,6 +3073,15 @@ std::shared_ptr<CWallet> CWallet::Create(WalletContext& context, const std::stri
                 break;
             }
         }
+    }
+
+    // QubitCoin: this is a pure post-quantum chain, so legacy (non-descriptor)
+    // wallets default to Dilithium addresses. Descriptor wallets cannot yet
+    // represent Dilithium keys, so they keep the inherited default. An explicit
+    // -addresstype still overrides this below.
+    if (!walletInstance->IsWalletFlagSet(WALLET_FLAG_DESCRIPTORS)) {
+        walletInstance->m_default_address_type = OutputType::DILITHIUM;
+        walletInstance->m_default_change_type = OutputType::DILITHIUM;
     }
 
     if (!args.GetArg("-addresstype", "").empty()) {

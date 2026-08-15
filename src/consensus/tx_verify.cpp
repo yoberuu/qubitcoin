@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2021 The Bitcoin Core developers
+// Copyright (c) 2017-2021 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -157,6 +157,19 @@ int64_t GetTransactionSigOpCost(const CTransaction& tx, const CCoinsViewCache& i
         assert(!coin.IsSpent());
         const CTxOut &prevout = coin.out;
         nSigOps += CountWitnessSigOps(tx.vin[i].scriptSig, prevout.scriptPubKey, &tx.vin[i].scriptWitness, flags);
+
+        // QubitCoin post-quantum verification-cost accounting (see
+        // DILITHIUM_VERIFY_SIGOP_COST in consensus/consensus.h). Charge for the
+        // Dilithium verifications that this input will actually trigger. These are
+        // the CHECKSIG operations in the *prevout* scriptPubKey being spent (e.g.
+        // exactly one for a Dilithium P2PKH output). Counting at spend-time — rather
+        // than only when the output was created — is what makes a "spend many cheap
+        // outputs" DoS transaction pay for the work it imposes. P2SH-wrapped and
+        // witness prevouts have zero top-level CHECKSIGs here and are already
+        // accounted for above; on this bare-P2PKH-only chain that is exactly the set
+        // of executed Dilithium checks.
+        const unsigned int n_dilithium_verifications = prevout.scriptPubKey.GetSigOpCount(/*fAccurate=*/true);
+        nSigOps += int64_t{n_dilithium_verifications} * WITNESS_SCALE_FACTOR * DILITHIUM_VERIFY_SIGOP_COST;
     }
     return nSigOps;
 }

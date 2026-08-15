@@ -1,5 +1,5 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2022 The Bitcoin Core developers
+// Copyright (c) 2009-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -67,6 +67,13 @@ extern const std::string BESTBLOCK_NOMERKLE;
 extern const std::string CRYPTED_KEY;
 extern const std::string CSCRIPT;
 extern const std::string DEFAULTKEY;
+//! QubitCoin: post-quantum Dilithium (ML-DSA-65) private key records.
+extern const std::string DILITHIUM_KEY;
+extern const std::string DILITHIUM_CRYPTED_KEY;
+//! QubitCoin: post-quantum Dilithium HD seed records (plaintext / encrypted).
+//! These make Dilithium keys deterministically recoverable from a single backup.
+extern const std::string DILITHIUM_HDSEED;
+extern const std::string DILITHIUM_HDSEED_CRYPTED;
 extern const std::string DESTDATA;
 extern const std::string FLAGS;
 extern const std::string HDCHAIN;
@@ -237,6 +244,15 @@ public:
     bool WriteKeyMetadata(const CKeyMetadata& meta, const CPubKey& pubkey, const bool overwrite);
     bool WriteKey(const CPubKey& vchPubKey, const CPrivKey& vchPrivKey, const CKeyMetadata &keyMeta);
     bool WriteCryptedKey(const CPubKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret, const CKeyMetadata &keyMeta);
+    //! QubitCoin: persist a post-quantum Dilithium (ML-DSA-65) private key (plaintext).
+    bool WriteDilithiumKey(const CDilithiumPubKey& vchPubKey, const std::vector<unsigned char>& vchPrivKey);
+    //! QubitCoin: persist an encrypted post-quantum Dilithium private key.
+    bool WriteDilithiumCryptedKey(const CDilithiumPubKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret);
+    //! QubitCoin: persist the plaintext Dilithium HD seed and its child counter.
+    bool WriteDilithiumHDSeed(const uint256& seed, uint32_t counter);
+    //! QubitCoin: persist the encrypted Dilithium HD seed (with its IV) and counter.
+    //! Also removes any plaintext seed record.
+    bool WriteDilithiumHDSeedCrypted(const uint256& iv, const std::vector<unsigned char>& crypted, uint32_t counter);
     bool WriteMasterKey(unsigned int nID, const CMasterKey& kMasterKey);
 
     bool WriteCScript(const uint160& hash, const CScript& redeemScript);

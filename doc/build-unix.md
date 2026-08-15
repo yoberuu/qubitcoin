@@ -4,12 +4,49 @@ Some notes on how to build Bitcoin Core in Unix.
 
 (For BSD specific instructions, see `build-*bsd.md` in this directory.)
 
+QubitCoin: liboqs is a required dependency
+---------------------
+
+QubitCoin signs every spend with ML-DSA-65 (Dilithium), which comes from
+[liboqs](https://github.com/open-quantum-safe/liboqs). It is not optional here:
+a node built without it fails its startup self-test and exits. The current tree is
+built, measured, and tested against **liboqs 0.14.1-dev**.
+
+```bash
+# Debian/Ubuntu: build liboqs from source (no distro package at the time of writing)
+sudo apt-get install cmake ninja-build libssl-dev
+git clone https://github.com/open-quantum-safe/liboqs
+cmake -S liboqs -B liboqs/build -GNinja -DBUILD_SHARED_LIBS=ON
+cmake --build liboqs/build --parallel
+sudo cmake --install liboqs/build
+sudo ldconfig
+pkg-config --modversion liboqs    # record this — see below
+```
+
+Then configure QubitCoin with liboqs explicitly required:
+
+```bash
+./configure --with-liboqs=yes
+```
+
+The default (`--with-liboqs=auto`) silently produces a binary *without*
+post-quantum support when liboqs is missing, and that binary cannot run:
+`dilithium::SelfTest()` fails during the node's sanity checks and startup aborts
+with `Post-quantum (ML-DSA-65) cryptography sanity check failure`. Passing `=yes`
+turns the missing dependency into a configure-time error instead.
+
+**Record the liboqs version and commit you built against**, and keep it with your
+wallet backups. Wallet key derivation depends on how liboqs consumes randomness
+during key generation; a pinned known-answer test checks this at every startup.
+See [qubitcoin-recovery.md](qubitcoin-recovery.md) for the details and for what to
+do if that check ever fails.
+
 To Build
 ---------------------
 
 ```bash
 ./autogen.sh
-./configure
+./configure --with-liboqs=yes
 make # use "-j N" for N parallel jobs
 make install # optional
 ```

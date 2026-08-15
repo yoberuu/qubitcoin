@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2014-2022 The Bitcoin Core developers
+# Copyright (c) 2014-2022 Yelpful Technologies
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Run regression test suite.
@@ -299,6 +299,8 @@ BASE_SCRIPTS = [
     'wallet_signmessagewithaddress.py',
     'rpc_signmessagewithprivkey.py',
     'rpc_generate.py',
+    'wallet_dilithium_mining.py --legacy-wallet',
+    'wallet_dilithium_address_safety.py --legacy-wallet',
     'wallet_balance.py --legacy-wallet',
     'wallet_balance.py --descriptors',
     'p2p_initial_headers_sync.py',

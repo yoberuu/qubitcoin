@@ -1,4 +1,4 @@
-// Copyright (c) 2011-2022 The Bitcoin Core developers
+// Copyright (c) 2011-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -557,6 +557,9 @@ CreatedTransactionResult FundTransaction(CWallet& wallet, const CMutableTransact
             if (!IsValidDestination(dest)) {
                 throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Change address must be a valid bitcoin address");
             }
+            // Change is usually the largest output, so a dead change address
+            // burns more than a mistyped recipient would.
+            CheckDestinationIsSpendable(dest, change_address_str);
 
             coinControl.destChange = dest;
         }

@@ -1,5 +1,5 @@
 // Copyright (c) 2010 Satoshi Nakamoto
-// Copyright (c) 2009-2022 The Bitcoin Core developers
+// Copyright (c) 2009-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -348,8 +348,8 @@ static RPCHelpMan createwallet()
             {"blank", RPCArg::Type::BOOL, RPCArg::Default{false}, "Create a blank wallet. A blank wallet has no keys or HD seed. One can be set using sethdseed."},
             {"passphrase", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Encrypt the wallet with this passphrase."},
             {"avoid_reuse", RPCArg::Type::BOOL, RPCArg::Default{false}, "Keep track of coin reuse, and treat dirty and clean coins differently with privacy considerations in mind."},
-            {"descriptors", RPCArg::Type::BOOL, RPCArg::Default{true}, "Create a native descriptor wallet. The wallet will use descriptors internally to handle address creation."
-                                                                       " Setting to \"false\" will create a legacy wallet; This is only possible with the -deprecatedrpc=create_bdb setting because, the legacy wallet type is being deprecated and"
+            {"descriptors", RPCArg::Type::BOOL, RPCArg::Default{false}, "QubitCoin: defaults to false. A legacy wallet is created because it is the only wallet type that can hold post-quantum Dilithium keys (the only signature scheme on this chain)."
+                                                                       " Setting to \"true\" creates a native descriptor wallet, which on this chain can only hold now-unusable ECDSA/secp256k1 keys and cannot produce spendable addresses;"
                                                                        " support for creating and opening legacy wallets will be removed in the future."},
             {"load_on_startup", RPCArg::Type::BOOL, RPCArg::Optional::OMITTED, "Save wallet name to persistent settings and load on startup. True to add wallet to startup list, false to remove, null to leave unchanged."},
             {"external_signer", RPCArg::Type::BOOL, RPCArg::Default{false}, "Use an external signer such as a hardware wallet. Requires -signer to be configured. Wallet creation will fail if keys cannot be fetched. Requires disable_private_keys and descriptors set to true."},
@@ -365,10 +365,11 @@ static RPCHelpMan createwallet()
             }
         },
         RPCExamples{
-            HelpExampleCli("createwallet", "\"testwallet\"")
-            + HelpExampleRpc("createwallet", "\"testwallet\"")
-            + HelpExampleCliNamed("createwallet", {{"wallet_name", "descriptors"}, {"avoid_reuse", true}, {"descriptors", true}, {"load_on_startup", true}})
-            + HelpExampleRpcNamed("createwallet", {{"wallet_name", "descriptors"}, {"avoid_reuse", true}, {"descriptors", true}, {"load_on_startup", true}})
+            HelpExampleCli("createwallet", "\"mywallet\"")
+            + HelpExampleRpc("createwallet", "\"mywallet\"")
+            + HelpExampleCliNamed("createwallet", {{"wallet_name", "mywallet"}, {"avoid_reuse", true}, {"load_on_startup", true}})
+            + HelpExampleRpcNamed("createwallet", {{"wallet_name", "mywallet"}, {"avoid_reuse", true}, {"load_on_startup", true}})
+            + HelpExampleCliNamed("createwallet", {{"wallet_name", "descwallet"}, {"descriptors", true}})
         },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
@@ -401,10 +402,13 @@ static RPCHelpMan createwallet()
 #endif
         flags |= WALLET_FLAG_DESCRIPTORS;
     } else {
-        if (!context.chain->rpcEnableDeprecated("create_bdb")) {
-            throw JSONRPCError(RPC_WALLET_ERROR, "BDB wallet creation is deprecated and will be removed in a future release."
-                                                 " In this release it can be re-enabled temporarily with the -deprecatedrpc=create_bdb setting.");
-        }
+        // QubitCoin: legacy wallets are the default and preferred type because
+        // only the legacy ScriptPubKeyMan can generate/store post-quantum
+        // Dilithium keys. They are persisted with the SQLite backend, so BDB is
+        // not required and the create_bdb deprecation gate does not apply here.
+#if !defined(USE_SQLITE) && !defined(USE_BDB)
+        throw JSONRPCError(RPC_WALLET_ERROR, "Compiled without sqlite or bdb support (required for wallets)");
+#endif
     }
     if (!request.params[7].isNull() && request.params[7].get_bool()) {
 #ifdef ENABLE_EXTERNAL_SIGNER
@@ -413,12 +417,6 @@ static RPCHelpMan createwallet()
         throw JSONRPCError(RPC_WALLET_ERROR, "Compiled without external signing support (required for external signing)");
 #endif
     }
-
-#ifndef USE_BDB
-    if (!(flags & WALLET_FLAG_DESCRIPTORS)) {
-        throw JSONRPCError(RPC_WALLET_ERROR, "Compiled without bdb support (required for legacy wallets)");
-    }
-#endif
 
     DatabaseOptions options;
     DatabaseStatus status;

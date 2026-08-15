@@ -1,5 +1,5 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2022 The Bitcoin Core developers
+// Copyright (c) 2009-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -103,7 +103,15 @@ std::unique_ptr<WalletDatabase> MakeWalletDatabase(const std::string& name, cons
 //! -paytxfee default
 constexpr CAmount DEFAULT_PAY_TX_FEE = 0;
 //! -fallbackfee default
-static const CAmount DEFAULT_FALLBACK_FEE = 0;
+//! QubitCoin: Bitcoin ships this at 0, which disables the fallback and makes
+//! sends fail with "Fee estimation failed. Fallbackfee is disabled." whenever
+//! the fee estimator has no data (a brand new chain, regtest, or a freshly
+//! started node). Because this is a young post-quantum chain that will spend a
+//! long time without a rich fee history, default to a small, sane fallback
+//! feerate (0.0001 QBTC/kvB ~= 10 sat/vB) so ordinary sendtoaddress calls work
+//! out of the box. Users can still override with -fallbackfee=0 to require an
+//! explicit estimate.
+static const CAmount DEFAULT_FALLBACK_FEE = 10000;
 //! -discardfee default
 static const CAmount DEFAULT_DISCARD_FEE = 10000;
 //! -mintxfee default
@@ -134,18 +142,32 @@ static const bool DEFAULT_WALLETBROADCAST = true;
 static const bool DEFAULT_DISABLE_WALLET = false;
 static const bool DEFAULT_WALLETCROSSCHAIN = false;
 //! -maxtxfee default
-constexpr CAmount DEFAULT_TRANSACTION_MAXFEE{COIN / 10};
-//! Discourage users to set fees higher than this amount (in satoshis) per kB
+//! QubitCoin: this is an ABSOLUTE per-transaction fee ceiling. A post-quantum
+//! Dilithium transaction is ~35-40x larger than the ECDSA transaction this cap
+//! was originally tuned for (each spent input carries a ~3.3 KB signature and a
+//! ~2 KB public key), so at any given feerate the absolute fee is ~35-40x higher.
+//! Leaving the ceiling at 0.1 coin would reject perfectly ordinary multi-input
+//! sends whenever the network feerate rises. Raise it 10x so normal Dilithium
+//! sends are not rejected, while still catching gross fat-finger mistakes.
+constexpr CAmount DEFAULT_TRANSACTION_MAXFEE{COIN};
+//! Discourage users to set fees higher than this amount (in satoshis) per kB.
+//! This is a feerate (per-kB), so it does not need post-quantum size scaling.
 constexpr CAmount HIGH_TX_FEE_PER_KB{COIN / 100};
-//! -maxtxfee will warn if called with a higher fee than this amount (in satoshis)
-constexpr CAmount HIGH_MAX_TX_FEE{100 * HIGH_TX_FEE_PER_KB};
-//! Pre-calculated constants for input size estimation in *virtual size*
+//! -maxtxfee will warn if called with a higher fee than this amount (in satoshis).
+//! Scaled up alongside DEFAULT_TRANSACTION_MAXFEE so the raised default does not
+//! itself sit at the "very high" warning threshold.
+constexpr CAmount HIGH_MAX_TX_FEE{1000 * HIGH_TX_FEE_PER_KB};
+//! Pre-calculated constants for input size estimation in *virtual size*.
+//! QubitCoin: this is Bitcoin's ECDSA-shaped reference value. It is not used for
+//! estimating spends on this chain, where the relevant lower bound is a Dilithium
+//! input (see DILITHIUM_P2WPKH_INPUT_VSIZE in policy/policy.h).
 static constexpr size_t DUMMY_NESTED_P2WPKH_INPUT_SIZE = 91;
 
 class CCoinControl;
 
 //! Default for -addresstype
-constexpr OutputType DEFAULT_ADDRESS_TYPE{OutputType::BECH32};
+//! QubitCoin: Dilithium is the only spendable address type on this chain.
+constexpr OutputType DEFAULT_ADDRESS_TYPE{OutputType::DILITHIUM};
 
 static constexpr uint64_t KNOWN_WALLET_FLAGS =
         WALLET_FLAG_AVOID_REUSE

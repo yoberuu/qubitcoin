@@ -1,10 +1,12 @@
-// Copyright (c) 2019-2022 The Bitcoin Core developers
+// Copyright (c) 2019-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <dilithiumkey.h>
 #include <hash.h>
 #include <key_io.h>
 #include <logging.h>
+#include <random.h>
 #include <node/types.h>
 #include <outputtype.h>
 #include <script/descriptor.h>
@@ -19,6 +21,7 @@
 #include <util/translation.h>
 #include <wallet/scriptpubkeyman.h>
 
+#include <cstring>
 #include <optional>
 
 using common::PSBTError;
@@ -31,9 +34,16 @@ const uint32_t BIP32_HARDENED_KEY_LIMIT = 0x80000000;
 util::Result<CTxDestination> LegacyScriptPubKeyMan::GetNewDestination(const OutputType type)
 {
     if (LEGACY_OUTPUT_TYPES.count(type) == 0) {
-        return util::Error{_("Error: Legacy wallets only support the \"legacy\", \"p2sh-segwit\", and \"bech32\" address types")};
+        return util::Error{_("Error: Legacy wallets only support the \"legacy\", \"p2sh-segwit\", \"bech32\", and \"dilithium\" address types")};
     }
     assert(type != OutputType::BECH32M);
+
+    // QubitCoin: post-quantum Dilithium keys are generated on demand (no HD
+    // derivation, no ECDSA keypool).
+    if (type == OutputType::DILITHIUM) {
+        LOCK(cs_KeyStore);
+        return GenerateNewDilithiumDestination();
+    }
 
     // Fill-up keypool if needed
     TopUp();
@@ -47,6 +57,110 @@ util::Result<CTxDestination> LegacyScriptPubKeyMan::GetNewDestination(const Outp
     }
     LearnRelatedScripts(new_key, type);
     return GetDestinationForKey(new_key, type);
+}
+
+util::Result<CTxDestination> LegacyScriptPubKeyMan::GenerateNewDilithiumDestination()
+{
+    AssertLockHeld(cs_KeyStore);
+    if (m_storage.IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS)) {
+        return util::Error{_("Error: Private keys are disabled for this wallet")};
+    }
+    if (m_storage.IsLocked()) {
+        return util::Error{_("Error: Please enter the wallet passphrase with walletpassphrase first")};
+    }
+
+    WalletBatch batch(m_storage.GetDatabase());
+
+    // QubitCoin: derive the new key deterministically from the wallet's Dilithium
+    // HD seed so it is recoverable from a single backup. Lazily create the seed if
+    // this wallet predates the HD-seed feature.
+    if (!HasDilithiumHDSeed() && !SetupDilithiumHDSeed(batch)) {
+        return util::Error{_("Error: Failed to initialise the post-quantum Dilithium HD seed")};
+    }
+    uint256 master_seed;
+    if (!GetDilithiumHDSeed(master_seed)) {
+        return util::Error{_("Error: Please enter the wallet passphrase with walletpassphrase first")};
+    }
+
+    const uint32_t index = m_dilithium_hd_counter;
+    const uint256 child_seed = DeriveDilithiumChildSeed(master_seed, index);
+
+    CDilithiumKey key;
+    key.MakeNewKeyFromSeed(child_seed);
+    if (!key.IsValid()) {
+        return util::Error{_("Error: Failed to generate a post-quantum Dilithium key")};
+    }
+    CDilithiumPubKey pubkey = key.GetPubKey();
+
+    // Record creation-time metadata (with the HD derivation path) so rescans know
+    // the wallet's birthday and the key's origin.
+    int64_t nCreationTime = GetTime();
+    CKeyMetadata metadata(nCreationTime);
+    metadata.hdKeypath = "m/dilithium/" + std::to_string(index);
+    metadata.has_key_origin = false;
+    mapKeyMetadata[pubkey.GetID()] = metadata;
+    UpdateTimeFirstKey(nCreationTime);
+
+    if (!AddDilithiumKeyWithDB(batch, key)) {
+        return util::Error{_("Error: Failed to store the new post-quantum Dilithium key")};
+    }
+
+    // Advance and persist the child counter so recovery knows how many keys to
+    // re-derive, and so the next request derives a fresh key.
+    m_dilithium_hd_counter = index + 1;
+    if (m_dilithium_hd_seed_encrypted) {
+        batch.WriteDilithiumHDSeedCrypted(m_dilithium_hd_seed_iv, m_dilithium_hd_seed_crypted, m_dilithium_hd_counter);
+    } else {
+        batch.WriteDilithiumHDSeed(m_dilithium_hd_seed, m_dilithium_hd_counter);
+    }
+
+    return CTxDestination{DilithiumPKHash(pubkey)};
+}
+
+bool LegacyScriptPubKeyMan::SetupDilithiumHDSeed(WalletBatch& batch)
+{
+    AssertLockHeld(cs_KeyStore);
+    if (m_dilithium_hd_seed_set) return true;
+    if (m_storage.IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS)) return false;
+
+    // Fresh 256-bit master seed. New keys are derived as
+    // DeriveDilithiumChildSeed(seed, index) (see GenerateNewDilithiumDestination).
+    uint256 seed = GetRandHash();
+    m_dilithium_hd_seed = seed;
+    m_dilithium_hd_counter = 0;
+    m_dilithium_hd_seed_set = true;
+    m_dilithium_hd_seed_encrypted = false;
+
+    if (m_storage.HasEncryptionKeys()) {
+        // Wallet is already encrypted: store the seed encrypted immediately so the
+        // plaintext master secret is never written to disk.
+        uint256 iv = GetRandHash();
+        CKeyingMaterial plaintext{seed.begin(), seed.end()};
+        std::vector<unsigned char> crypted;
+        if (!m_storage.WithEncryptionKey([&](const CKeyingMaterial& encryption_key) {
+                return EncryptSecret(encryption_key, plaintext, iv, crypted);
+            })) {
+            m_dilithium_hd_seed_set = false;
+            return false;
+        }
+        m_dilithium_hd_seed_iv = iv;
+        m_dilithium_hd_seed_crypted = crypted;
+        m_dilithium_hd_seed_encrypted = true;
+        m_dilithium_hd_seed.SetNull(); // don't keep plaintext seed in memory
+        if (!batch.WriteDilithiumHDSeedCrypted(iv, crypted, 0)) {
+            m_dilithium_hd_seed_set = false;
+            return false;
+        }
+    } else {
+        if (!batch.WriteDilithiumHDSeed(seed, 0)) {
+            m_dilithium_hd_seed_set = false;
+            return false;
+        }
+    }
+
+    m_storage.UnsetBlankWalletFlag(batch);
+    NotifyCanGetAddressesChanged();
+    return true;
 }
 
 typedef std::vector<unsigned char> valtype;
@@ -149,7 +263,12 @@ IsMineResult IsMineInner(const LegacyDataSPKM& keystore, const CScript& scriptPu
                 return IsMineResult::INVALID;
             }
         }
-        if (keystore.HaveKey(keyID)) {
+        // QubitCoin: a P2PKH script backed by a post-quantum Dilithium key has
+        // the identical scriptPubKey template (OP_DUP OP_HASH160 <hash160> ...);
+        // the interpreter dispatches to Dilithium verification based on the
+        // 1952-byte pubkey revealed at spend time. Recognize ownership if either
+        // an ECDSA or a Dilithium key with this key id is in the store.
+        if (keystore.HaveKey(keyID) || keystore.HaveDilithiumKey(keyID)) {
             ret = std::max(ret, IsMineResult::SPENDABLE);
         }
         break;
@@ -238,7 +357,7 @@ bool LegacyDataSPKM::CheckDecryptionKey(const CKeyingMaterial& master_key)
         LOCK(cs_KeyStore);
         assert(mapKeys.empty());
 
-        bool keyPass = mapCryptedKeys.empty(); // Always pass when there are no encrypted keys
+        bool keyPass = mapCryptedKeys.empty() && mapDilithiumCryptedKeys.empty(); // Always pass when there are no encrypted keys
         bool keyFail = false;
         CryptedKeyMap::const_iterator mi = mapCryptedKeys.begin();
         WalletBatch batch(m_storage.GetDatabase());
@@ -258,6 +377,37 @@ bool LegacyDataSPKM::CheckDecryptionKey(const CKeyingMaterial& master_key)
             else {
                 // Rewrite these encrypted keys with checksums
                 batch.WriteCryptedKey(vchPubKey, vchCryptedSecret, mapKeyMetadata[vchPubKey.GetID()]);
+            }
+        }
+        // QubitCoin: also verify post-quantum Dilithium keys decrypt with this master key.
+        if (!keyFail) {
+            for (auto dmi = mapDilithiumCryptedKeys.begin(); dmi != mapDilithiumCryptedKeys.end(); ++dmi) {
+                const CDilithiumPubKey& vchPubKey = dmi->second.first;
+                const std::vector<unsigned char>& vchCryptedSecret = dmi->second.second;
+                CDilithiumKey key;
+                if (!DecryptDilithiumKey(master_key, vchCryptedSecret, vchPubKey, key)) {
+                    keyFail = true;
+                    break;
+                }
+                keyPass = true;
+                if (fDecryptionThoroughlyChecked)
+                    break;
+                else {
+                    // Rewrite these encrypted keys with checksums
+                    batch.WriteDilithiumCryptedKey(vchPubKey, vchCryptedSecret);
+                }
+            }
+        }
+        // QubitCoin: also verify the encrypted Dilithium HD seed decrypts. This
+        // catches a wrong passphrase even on a freshly-encrypted wallet that has a
+        // seed but no keys yet.
+        if (!keyFail && m_dilithium_hd_seed_set && m_dilithium_hd_seed_encrypted) {
+            CKeyingMaterial seed_plaintext;
+            if (!DecryptSecret(master_key, m_dilithium_hd_seed_crypted, m_dilithium_hd_seed_iv, seed_plaintext) ||
+                seed_plaintext.size() != 32) {
+                keyFail = true;
+            } else {
+                keyPass = true;
             }
         }
         if (keyPass && keyFail)
@@ -298,6 +448,45 @@ bool LegacyScriptPubKeyMan::Encrypt(const CKeyingMaterial& master_key, WalletBat
             return false;
         }
     }
+
+    // QubitCoin: encrypt post-quantum Dilithium keys with the same master key.
+    DilithiumKeyMap dilithium_keys_to_encrypt;
+    dilithium_keys_to_encrypt.swap(mapDilithiumKeys); // Clear so AddDilithiumCryptedKeyInner will succeed.
+    for (const auto& mKey : dilithium_keys_to_encrypt) {
+        const CDilithiumKey& key = mKey.second;
+        CDilithiumPubKey vchPubKey = key.GetPubKey();
+        CKeyingMaterial vchSecret{UCharCast(key.begin()), UCharCast(key.end())};
+        std::vector<unsigned char> vchCryptedSecret;
+        if (!EncryptSecret(master_key, vchSecret, vchPubKey.GetHash(), vchCryptedSecret)) {
+            encrypted_batch = nullptr;
+            return false;
+        }
+        if (!AddDilithiumCryptedKey(vchPubKey, vchCryptedSecret)) {
+            encrypted_batch = nullptr;
+            return false;
+        }
+    }
+
+    // QubitCoin: encrypt the Dilithium HD seed (the master recovery secret) so it
+    // is never left in plaintext once the wallet is encrypted.
+    if (m_dilithium_hd_seed_set && !m_dilithium_hd_seed_encrypted) {
+        uint256 iv = GetRandHash();
+        CKeyingMaterial seed_plaintext{m_dilithium_hd_seed.begin(), m_dilithium_hd_seed.end()};
+        std::vector<unsigned char> seed_crypted;
+        if (!EncryptSecret(master_key, seed_plaintext, iv, seed_crypted)) {
+            encrypted_batch = nullptr;
+            return false;
+        }
+        if (batch == nullptr || !batch->WriteDilithiumHDSeedCrypted(iv, seed_crypted, m_dilithium_hd_counter)) {
+            encrypted_batch = nullptr;
+            return false;
+        }
+        m_dilithium_hd_seed_iv = iv;
+        m_dilithium_hd_seed_crypted = seed_crypted;
+        m_dilithium_hd_seed_encrypted = true;
+        m_dilithium_hd_seed.SetNull();
+    }
+
     encrypted_batch = nullptr;
     return true;
 }
@@ -305,9 +494,22 @@ bool LegacyScriptPubKeyMan::Encrypt(const CKeyingMaterial& master_key, WalletBat
 util::Result<CTxDestination> LegacyScriptPubKeyMan::GetReservedDestination(const OutputType type, bool internal, int64_t& index, CKeyPool& keypool)
 {
     if (LEGACY_OUTPUT_TYPES.count(type) == 0) {
-        return util::Error{_("Error: Legacy wallets only support the \"legacy\", \"p2sh-segwit\", and \"bech32\" address types")};
+        return util::Error{_("Error: Legacy wallets only support the \"legacy\", \"p2sh-segwit\", \"bech32\", and \"dilithium\" address types")};
     }
     assert(type != OutputType::BECH32M);
+
+    // QubitCoin: Dilithium change keys are generated on demand rather than
+    // reserved from the keypool. Signal this with a sentinel index of -1 so
+    // KeepDestination/ReturnDestination treat it as a no-op.
+    if (type == OutputType::DILITHIUM) {
+        LOCK(cs_KeyStore);
+        auto op_dest = GenerateNewDilithiumDestination();
+        if (op_dest) {
+            index = -1;
+            keypool = CKeyPool();
+        }
+        return op_dest;
+    }
 
     LOCK(cs_KeyStore);
     if (!CanGetAddresses(internal)) {
@@ -443,11 +645,12 @@ bool LegacyScriptPubKeyMan::SetupGeneration(bool force)
         return false;
     }
 
-    SetHDSeed(GenerateNewSeed());
-    if (!NewKeyPool()) {
-        return false;
-    }
-    return true;
+    // QubitCoin is a pure post-quantum chain. New wallets set up ONLY a Dilithium
+    // HD seed; we deliberately do NOT generate the legacy ECDSA HD seed or the
+    // ECDSA keypool (which would otherwise sit dormant and be a backup footgun).
+    LOCK(cs_KeyStore);
+    WalletBatch batch(m_storage.GetDatabase());
+    return SetupDilithiumHDSeed(batch);
 }
 
 bool LegacyScriptPubKeyMan::IsHDEnabled() const
@@ -522,7 +725,7 @@ bool LegacyScriptPubKeyMan::Upgrade(int prev_version, int new_version, bilingual
 bool LegacyScriptPubKeyMan::HavePrivateKeys() const
 {
     LOCK(cs_KeyStore);
-    return !mapKeys.empty() || !mapCryptedKeys.empty();
+    return !mapKeys.empty() || !mapCryptedKeys.empty() || !mapDilithiumKeys.empty() || !mapDilithiumCryptedKeys.empty();
 }
 
 void LegacyScriptPubKeyMan::RewriteDB()
@@ -884,6 +1087,152 @@ bool LegacyScriptPubKeyMan::AddCryptedKey(const CPubKey &vchPubKey,
     }
 }
 
+// QubitCoin: post-quantum Dilithium key storage. These mirror the ECDSA
+// LoadKey/AddKeyPubKey/AddCryptedKey machinery above.
+
+bool LegacyDataSPKM::LoadDilithiumKey(const CDilithiumKey& key)
+{
+    return AddDilithiumKeyInner(key);
+}
+
+bool LegacyDataSPKM::AddDilithiumKeyInner(const CDilithiumKey& key)
+{
+    LOCK(cs_KeyStore);
+    return FillableSigningProvider::AddDilithiumKey(key);
+}
+
+bool LegacyScriptPubKeyMan::AddDilithiumKeyInner(const CDilithiumKey& key)
+{
+    LOCK(cs_KeyStore);
+    if (!m_storage.HasEncryptionKeys()) {
+        return FillableSigningProvider::AddDilithiumKey(key);
+    }
+
+    if (m_storage.IsLocked()) {
+        return false;
+    }
+
+    CDilithiumPubKey pubkey = key.GetPubKey();
+    std::vector<unsigned char> vchCryptedSecret;
+    CKeyingMaterial vchSecret{UCharCast(key.begin()), UCharCast(key.end())};
+    if (!m_storage.WithEncryptionKey([&](const CKeyingMaterial& encryption_key) {
+            return EncryptSecret(encryption_key, vchSecret, pubkey.GetHash(), vchCryptedSecret);
+        })) {
+        return false;
+    }
+
+    if (!AddDilithiumCryptedKey(pubkey, vchCryptedSecret)) {
+        return false;
+    }
+    return true;
+}
+
+bool LegacyDataSPKM::LoadDilithiumCryptedKey(const CDilithiumPubKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret, bool checksum_valid)
+{
+    if (!checksum_valid) {
+        fDecryptionThoroughlyChecked = false;
+    }
+    return AddDilithiumCryptedKeyInner(vchPubKey, vchCryptedSecret);
+}
+
+bool LegacyDataSPKM::AddDilithiumCryptedKeyInner(const CDilithiumPubKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret)
+{
+    LOCK(cs_KeyStore);
+    mapDilithiumCryptedKeys[vchPubKey.GetID()] = std::make_pair(vchPubKey, vchCryptedSecret);
+    return true;
+}
+
+void LegacyDataSPKM::LoadDilithiumHDSeed(const uint256& seed, uint32_t counter)
+{
+    LOCK(cs_KeyStore);
+    m_dilithium_hd_seed = seed;
+    m_dilithium_hd_counter = counter;
+    m_dilithium_hd_seed_encrypted = false;
+    m_dilithium_hd_seed_set = true;
+}
+
+void LegacyDataSPKM::LoadDilithiumHDSeedCrypted(const uint256& iv, const std::vector<unsigned char>& crypted, uint32_t counter)
+{
+    LOCK(cs_KeyStore);
+    m_dilithium_hd_seed_iv = iv;
+    m_dilithium_hd_seed_crypted = crypted;
+    m_dilithium_hd_counter = counter;
+    m_dilithium_hd_seed_encrypted = true;
+    m_dilithium_hd_seed_set = true;
+}
+
+bool LegacyDataSPKM::HasDilithiumHDSeed() const
+{
+    LOCK(cs_KeyStore);
+    return m_dilithium_hd_seed_set;
+}
+
+bool LegacyDataSPKM::GetDilithiumHDSeed(uint256& seed_out) const
+{
+    LOCK(cs_KeyStore);
+    if (!m_dilithium_hd_seed_set) return false;
+    if (!m_dilithium_hd_seed_encrypted) {
+        seed_out = m_dilithium_hd_seed;
+        return true;
+    }
+    // Encrypted: decrypt with the (in-memory, unlocked) encryption key.
+    CKeyingMaterial plaintext;
+    if (!m_storage.WithEncryptionKey([&](const CKeyingMaterial& encryption_key) {
+            return DecryptSecret(encryption_key, m_dilithium_hd_seed_crypted, m_dilithium_hd_seed_iv, plaintext);
+        })) {
+        return false;
+    }
+    if (plaintext.size() != seed_out.size()) return false;
+    memcpy(seed_out.data(), plaintext.data(), seed_out.size());
+    return true;
+}
+
+bool LegacyScriptPubKeyMan::AddDilithiumKey(const CDilithiumKey& key)
+{
+    LOCK(cs_KeyStore);
+    WalletBatch batch(m_storage.GetDatabase());
+    return AddDilithiumKeyWithDB(batch, key);
+}
+
+bool LegacyScriptPubKeyMan::AddDilithiumKeyWithDB(WalletBatch& batch, const CDilithiumKey& key)
+{
+    AssertLockHeld(cs_KeyStore);
+    assert(!m_storage.IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS));
+
+    CDilithiumPubKey pubkey = key.GetPubKey();
+
+    // Tunnel the database handle through to AddDilithiumCryptedKey (via
+    // AddDilithiumKeyInner) so encrypted writes join this batch.
+    bool needsDB = !encrypted_batch;
+    if (needsDB) {
+        encrypted_batch = &batch;
+    }
+    if (!AddDilithiumKeyInner(key)) {
+        if (needsDB) encrypted_batch = nullptr;
+        return false;
+    }
+    if (needsDB) encrypted_batch = nullptr;
+
+    m_storage.UnsetBlankWalletFlag(batch);
+    if (!m_storage.HasEncryptionKeys()) {
+        std::vector<unsigned char> secret(key.begin(), key.end());
+        return batch.WriteDilithiumKey(pubkey, secret);
+    }
+    return true;
+}
+
+bool LegacyScriptPubKeyMan::AddDilithiumCryptedKey(const CDilithiumPubKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret)
+{
+    if (!AddDilithiumCryptedKeyInner(vchPubKey, vchCryptedSecret)) {
+        return false;
+    }
+    LOCK(cs_KeyStore);
+    if (encrypted_batch) {
+        return encrypted_batch->WriteDilithiumCryptedKey(vchPubKey, vchCryptedSecret);
+    }
+    return WalletBatch(m_storage.GetDatabase()).WriteDilithiumCryptedKey(vchPubKey, vchCryptedSecret);
+}
+
 bool LegacyDataSPKM::HaveWatchOnly(const CScript &dest) const
 {
     LOCK(cs_KeyStore);
@@ -1024,6 +1373,47 @@ bool LegacyDataSPKM::GetKey(const CKeyID &address, CKey& keyOut) const
         const std::vector<unsigned char> &vchCryptedSecret = (*mi).second.second;
         return m_storage.WithEncryptionKey([&](const CKeyingMaterial& encryption_key) {
             return DecryptKey(encryption_key, vchCryptedSecret, vchPubKey, keyOut);
+        });
+    }
+    return false;
+}
+
+bool LegacyDataSPKM::HaveDilithiumKey(const CKeyID& address) const
+{
+    LOCK(cs_KeyStore);
+    if (!m_storage.HasEncryptionKeys()) {
+        return FillableSigningProvider::HaveDilithiumKey(address);
+    }
+    return mapDilithiumCryptedKeys.count(address) > 0;
+}
+
+bool LegacyDataSPKM::GetDilithiumPubKey(const CKeyID& address, CDilithiumPubKey& pubkeyOut) const
+{
+    LOCK(cs_KeyStore);
+    if (!m_storage.HasEncryptionKeys()) {
+        return FillableSigningProvider::GetDilithiumPubKey(address, pubkeyOut);
+    }
+    const auto mi = mapDilithiumCryptedKeys.find(address);
+    if (mi != mapDilithiumCryptedKeys.end()) {
+        pubkeyOut = mi->second.first;
+        return true;
+    }
+    return false;
+}
+
+bool LegacyDataSPKM::GetDilithiumKey(const CKeyID& address, CDilithiumKey& keyOut) const
+{
+    LOCK(cs_KeyStore);
+    if (!m_storage.HasEncryptionKeys()) {
+        return FillableSigningProvider::GetDilithiumKey(address, keyOut);
+    }
+
+    const auto mi = mapDilithiumCryptedKeys.find(address);
+    if (mi != mapDilithiumCryptedKeys.end()) {
+        const CDilithiumPubKey& vchPubKey = mi->second.first;
+        const std::vector<unsigned char>& vchCryptedSecret = mi->second.second;
+        return m_storage.WithEncryptionKey([&](const CKeyingMaterial& encryption_key) {
+            return DecryptDilithiumKey(encryption_key, vchCryptedSecret, vchPubKey, keyOut);
         });
     }
     return false;
@@ -1202,9 +1592,11 @@ void LegacyDataSPKM::LoadKeyPool(int64_t nIndex, const CKeyPool &keypool)
 
 bool LegacyScriptPubKeyMan::CanGenerateKeys() const
 {
-    // A wallet can generate keys if it has an HD seed (IsHDEnabled) or it is a non-HD wallet (pre FEATURE_HD)
+    // A wallet can generate keys if it has a (Dilithium or ECDSA) HD seed or it is
+    // a non-HD wallet (pre FEATURE_HD). QubitCoin wallets are driven by the
+    // Dilithium HD seed.
     LOCK(cs_KeyStore);
-    return IsHDEnabled() || !m_storage.CanSupportFeature(FEATURE_HD);
+    return m_dilithium_hd_seed_set || IsHDEnabled() || !m_storage.CanSupportFeature(FEATURE_HD);
 }
 
 CPubKey LegacyScriptPubKeyMan::GenerateNewSeed()
@@ -1297,6 +1689,15 @@ bool LegacyScriptPubKeyMan::NewKeyPool()
 
 bool LegacyScriptPubKeyMan::TopUp(unsigned int kpSize)
 {
+    // QubitCoin: this is a Dilithium-only chain. Post-quantum Dilithium keys are
+    // generated deterministically on demand from the wallet's Dilithium HD seed
+    // (see GenerateNewDilithiumDestination) and are NOT pooled, so there is no
+    // ECDSA keypool to top up. Skip legacy secp256k1 keypool generation entirely
+    // so new wallets never accumulate a dormant ECDSA keypool / HD seed.
+    if (HasDilithiumHDSeed() || !IsHDEnabled()) {
+        return true;
+    }
+
     if (!CanGenerateKeys()) {
         return false;
     }
@@ -1390,6 +1791,8 @@ void LegacyScriptPubKeyMan::AddKeypoolPubkeyWithDB(const CPubKey& pubkey, const 
 void LegacyScriptPubKeyMan::KeepDestination(int64_t nIndex, const OutputType& type)
 {
     assert(type != OutputType::BECH32M);
+    // QubitCoin: on-demand Dilithium destinations are not keypool-backed.
+    if (nIndex == -1) return;
     // Remove from key pool
     WalletBatch batch(m_storage.GetDatabase());
     batch.ErasePool(nIndex);
@@ -1403,6 +1806,8 @@ void LegacyScriptPubKeyMan::KeepDestination(int64_t nIndex, const OutputType& ty
 
 void LegacyScriptPubKeyMan::ReturnDestination(int64_t nIndex, bool fInternal, const CTxDestination&)
 {
+    // QubitCoin: on-demand Dilithium destinations are not keypool-backed.
+    if (nIndex == -1) return;
     // Return to key pool
     {
         LOCK(cs_KeyStore);
@@ -1715,6 +2120,13 @@ std::unordered_set<CScript, SaltedSipHasher> LegacyDataSPKM::GetScriptPubKeys() 
         const CPubKey& pub = key_pair.second.first;
         spks.insert(GetScriptForRawPubKey(pub));
         spks.insert(GetScriptForDestination(PKHash(pub)));
+    }
+    // QubitCoin: post-quantum Dilithium keys are spent through a P2PKH-style script.
+    for (const auto& key_pair : mapDilithiumKeys) {
+        spks.insert(GetScriptForDestination(DilithiumPKHash(key_pair.first)));
+    }
+    for (const auto& key_pair : mapDilithiumCryptedKeys) {
+        spks.insert(GetScriptForDestination(DilithiumPKHash(key_pair.second.first)));
     }
 
     // For every script in mapScript, only the ISMINE_SPENDABLE ones are being tracked.

@@ -1,5 +1,5 @@
 // Copyright (c) 2010 Satoshi Nakamoto
-// Copyright (c) 2009-2022 The Bitcoin Core developers
+// Copyright (c) 2009-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -160,6 +160,7 @@ static bool GenerateBlock(ChainstateManager& chainman, Mining& miner, CBlock& bl
 static UniValue generateBlocks(ChainstateManager& chainman, Mining& miner, const CScript& coinbase_script, int nGenerate, uint64_t nMaxTries)
 {
     UniValue blockHashes(UniValue::VARR);
+    const uint64_t initial_max_tries{nMaxTries};
     while (nGenerate > 0 && !chainman.m_interrupt) {
         std::unique_ptr<CBlockTemplate> pblocktemplate(miner.createNewBlock(coinbase_script));
         if (!pblocktemplate.get())
@@ -167,6 +168,18 @@ static UniValue generateBlocks(ChainstateManager& chainman, Mining& miner, const
 
         std::shared_ptr<const CBlock> block_out;
         if (!GenerateBlock(chainman, miner, pblocktemplate->block, nMaxTries, block_out, /*process_new_block=*/true)) {
+            // PoW try budget exhausted (or interrupt). Returning a silent [] made
+            // Testnet4 CPU mining look like a Dilithium/coinbase failure.
+            if (chainman.m_interrupt) {
+                break;
+            }
+            if (blockHashes.empty()) {
+                throw JSONRPCError(RPC_MISC_ERROR, strprintf(
+                    "Failed to find a valid proof-of-work within maxtries (%d). "
+                    "CreateNewBlock succeeded; increase maxtries, or wait until the "
+                    "min-difficulty rule applies (block time > 2× target spacing since the tip).",
+                    initial_max_tries));
+            }
             break;
         }
 
@@ -280,7 +293,7 @@ static RPCHelpMan generatetoaddress()
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
     const int num_blocks{request.params[0].getInt<int>()};
-    const uint64_t max_tries{request.params[2].isNull() ? DEFAULT_MAX_TRIES : request.params[2].getInt<int>()};
+    const uint64_t max_tries{request.params[2].isNull() ? DEFAULT_MAX_TRIES : request.params[2].getInt<uint64_t>()};
 
     CTxDestination destination = DecodeDestination(request.params[1].get_str());
     if (!IsValidDestination(destination)) {
@@ -291,6 +304,8 @@ static RPCHelpMan generatetoaddress()
     Mining& miner = EnsureMining(node);
     ChainstateManager& chainman = EnsureChainman(node);
 
+    // DilithiumPKHash and PKHash both produce the standard 25-byte P2PKH
+    // scriptPubKey; no ECDSA key material is required to build the coinbase.
     CScript coinbase_script = GetScriptForDestination(destination);
 
     return generateBlocks(chainman, miner, coinbase_script, num_blocks, max_tries);

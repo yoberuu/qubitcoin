@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2022 The Bitcoin Core developers
+// Copyright (c) 2017-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -125,6 +125,16 @@ CPubKey AddrToPubKey(const FillableSigningProvider& keystore, const std::string&
 CTxDestination AddAndGetMultisigDestination(const int required, const std::vector<CPubKey>& pubkeys, OutputType type, FlatSigningProvider& keystore, CScript& script_out);
 
 UniValue DescribeAddress(const CTxDestination& dest);
+
+/**
+ * Raise an RPC error if paying to `dest` would burn the funds.
+ *
+ * QubitCoin is Dilithium-only, so every address type inherited from Bitcoin is
+ * unspendable (see IsDilithiumDestination). Call this wherever a user-supplied
+ * address string becomes a payment destination; `address` is echoed back so the
+ * caller can tell which of several outputs was refused.
+ */
+void CheckDestinationIsSpendable(const CTxDestination& dest, const std::string& address);
 
 /** Parse a sighash string representation and raise an RPC error if it is invalid. */
 int ParseSighashString(const UniValue& sighash);

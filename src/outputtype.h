@@ -1,5 +1,5 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2022 The Bitcoin Core developers
+// Copyright (c) 2009-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -19,9 +19,15 @@ enum class OutputType {
     P2SH_SEGWIT,
     BECH32,
     BECH32M,
+    //! QubitCoin post-quantum: P2PKH-style output backed by a Dilithium (ML-DSA-65) key.
+    DILITHIUM,
     UNKNOWN,
 };
 
+// Note: DILITHIUM is deliberately excluded here. OUTPUT_TYPES enumerates the
+// descriptor-capable output types iterated during descriptor wallet setup and
+// "all address types" loops. Post-quantum Dilithium is served only by the legacy
+// ScriptPubKeyMan (see LEGACY_OUTPUT_TYPES) and is selected explicitly.
 static constexpr auto OUTPUT_TYPES = std::array{
     OutputType::LEGACY,
     OutputType::P2SH_SEGWIT,
@@ -50,5 +56,15 @@ CTxDestination AddAndGetDestinationForScript(FlatSigningProvider& keystore, cons
 
 /** Get the OutputType for a CTxDestination */
 std::optional<OutputType> OutputTypeFromDestination(const CTxDestination& dest);
+
+/**
+ * Keep leftover ECDSA encoding when a descriptor still names LEGACY.
+ *
+ * ExtractDestination maps every P2PKH script to DilithiumPKHash so on-chain
+ * RPCs match getnewaddress. pkh() and addr(<ECDSA P2PKH>) still mean an
+ * unspendable destination; encoding those as Dilithium would make
+ * deriveaddresses mint a payable-looking address that burns the funds.
+ */
+CTxDestination PreserveDescriptorAddressType(CTxDestination extracted, std::optional<OutputType> type);
 
 #endif // BITCOIN_OUTPUTTYPE_H

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2022 The Bitcoin Core developers
+// Copyright (c) 2012-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -133,8 +133,11 @@ BOOST_AUTO_TEST_CASE(GetTxSigOpCost)
         BuildTxs(spendingTx, coins, creationTx, scriptPubKey, scriptSig, CScriptWitness());
         // Legacy counting only includes signature operations in scriptSigs and scriptPubKeys
         // of a transaction and does not take the actual executed sig operations into account.
-        // spendingTx in itself does not contain a signature operation.
-        assert(GetTransactionSigOpCost(CTransaction(spendingTx), coins, flags) == 0);
+        // spendingTx in itself does not contain a signature operation, so legacy cost is 0.
+        // QubitCoin, however, additionally charges the post-quantum verification cost for the
+        // CHECKSIG operations in the *prevout* being spent (here a bare 1-of-2 multisig, whose
+        // accurate top-level sig-op count is 2), so the total is the Dilithium accounting.
+        assert(GetTransactionSigOpCost(CTransaction(spendingTx), coins, flags) == 2 * WITNESS_SCALE_FACTOR * DILITHIUM_VERIFY_SIGOP_COST);
         // creationTx contains two signature operations in its scriptPubKey, but legacy counting
         // is not accurate.
         assert(GetTransactionSigOpCost(CTransaction(creationTx), coins, flags) == MAX_PUBKEYS_PER_MULTISIG * WITNESS_SCALE_FACTOR);

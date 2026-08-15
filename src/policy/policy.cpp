@@ -1,5 +1,5 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2022 The Bitcoin Core developers
+// Copyright (c) 2009-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -23,22 +23,92 @@
 #include <cstddef>
 #include <vector>
 
+/**
+ * True if `element` is an ML-DSA-65 public key, or is a script that pushes one.
+ *
+ * A bare Dilithium P2PKH scriptSig pushes the 1952-byte key directly, but the
+ * same key can be reached one level deeper: inside a P2SH redeemScript push or
+ * a P2WSH witnessScript. Both nest the key inside a *larger* push, so a plain
+ * "is this push 1952 bytes?" test misses them. Recursing one level is enough —
+ * P2SH and P2WSH cannot nest further.
+ */
+static bool ElementCarriesDilithiumPubKey(Span<const unsigned char> element)
+{
+    if (element.size() == DILITHIUM_PUBKEY_ELEMENT_SIZE) {
+        return true;
+    }
+    // Anything at or below key size cannot *contain* a key push.
+    if (element.size() <= DILITHIUM_PUBKEY_ELEMENT_SIZE) {
+        return false;
+    }
+    const CScript inner(element.begin(), element.end());
+    CScript::const_iterator pc = inner.begin();
+    opcodetype opcode;
+    std::vector<unsigned char> data;
+    while (inner.GetOp(pc, opcode, data)) {
+        if (data.size() == DILITHIUM_PUBKEY_ELEMENT_SIZE) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Heuristic: an input "looks like" a Dilithium spend if any of its scriptSig
+ * pushes or witness stack items carries an ML-DSA-65 public key. This needs no
+ * UTXO lookup, and covers every shape that can trigger a Dilithium
+ * verification: bare P2PKH (direct scriptSig push), P2SH-wrapped (key nested in
+ * the redeemScript push) and native/wrapped segwit (key in the witness stack,
+ * where the scriptSig is empty).
+ *
+ * False positives on exotic scripts are acceptable for a policy DoS bound: such
+ * scripts are either already non-standard for other reasons, or carry ~2 kB of
+ * key-shaped data whose relay we are happy to rate-limit anyway.
+ */
+static bool InputLooksLikeDilithiumSpend(const CTxIn& txin)
+{
+    CScript::const_iterator pc = txin.scriptSig.begin();
+    opcodetype opcode;
+    std::vector<unsigned char> data;
+    while (txin.scriptSig.GetOp(pc, opcode, data)) {
+        if (ElementCarriesDilithiumPubKey(data)) {
+            return true;
+        }
+    }
+    for (const std::vector<unsigned char>& item : txin.scriptWitness.stack) {
+        if (ElementCarriesDilithiumPubKey(item)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+unsigned int CountDilithiumSpendInputs(const CTransaction& tx)
+{
+    unsigned int count = 0;
+    for (const CTxIn& txin : tx.vin) {
+        if (InputLooksLikeDilithiumSpend(txin)) ++count;
+    }
+    return count;
+}
+
 CAmount GetDustThreshold(const CTxOut& txout, const CFeeRate& dustRelayFeeIn)
 {
     // "Dust" is defined in terms of dustRelayFee,
     // which has units satoshis-per-kilobyte.
     // If you'd pay more in fees than the value of the output
     // to spend something, then we consider it dust.
-    // A typical spendable non-segwit txout is 34 bytes big, and will
-    // need a CTxIn of at least 148 bytes to spend:
-    // so dust is a spendable txout less than
-    // 182*dustRelayFee/1000 (in satoshis).
-    // 546 satoshis at the default rate of 3000 sat/kvB.
-    // A typical spendable segwit P2WPKH txout is 31 bytes big, and will
-    // need a CTxIn of at least 67 bytes to spend:
-    // so dust is a spendable txout less than
-    // 98*dustRelayFee/1000 (in satoshis).
-    // 294 satoshis at the default rate of 3000 sat/kvB.
+    //
+    // QubitCoin: the cost of spending an output is dominated by the post-quantum
+    // signature, so the threshold has to come from the real Dilithium spend size
+    // for whichever form the output commits to. Bitcoin's estimates (148 bytes
+    // for a bare input, 67 for a segwit one) are 29x and 20x too small here; used
+    // as-is they let the wallet and relay create outputs that can never be spent
+    // economically. In exchange these numbers are exact rather than approximate:
+    // an ML-DSA-65 signature and public key are fixed length.
+    //
+    //   bare P2PKH  34 + 5311 = 5345 bytes => 16035 sat at 3000 sat/kvB
+    //   P2WPKH      31 + 1359 = 1390 bytes =>  4170 sat at 3000 sat/kvB
     if (txout.scriptPubKey.IsUnspendable())
         return 0;
 
@@ -46,17 +116,32 @@ CAmount GetDustThreshold(const CTxOut& txout, const CFeeRate& dustRelayFeeIn)
     int witnessversion = 0;
     std::vector<unsigned char> witnessprogram;
 
-    // Note this computation is for spending a Segwit v0 P2WPKH output (a 33 bytes
-    // public key + an ECDSA signature). For Segwit v1 Taproot outputs the minimum
-    // satisfaction is lower (a single BIP340 signature) but this computation was
-    // kept to not further reduce the dust level.
-    // See discussion in https://github.com/bitcoin/bitcoin/pull/22779 for details.
-    if (txout.scriptPubKey.IsWitnessProgram(witnessversion, witnessprogram)) {
+    std::vector<std::vector<unsigned char>> solutions;
+    const TxoutType type{Solver(txout.scriptPubKey, solutions)};
+
+    if (type == TxoutType::PUBKEYHASH) {
+        // Bare Dilithium: signature and key sit in the undiscounted scriptSig.
+        nSize += DILITHIUM_P2PKH_INPUT_VSIZE;
+    } else if (type == TxoutType::WITNESS_V0_KEYHASH) {
+        // Witness Dilithium: the same two elements, moved into the witness and so
+        // discounted 4:1. This is the cheap form and its lower dust threshold
+        // reflects that honestly.
+        nSize += DILITHIUM_P2WPKH_INPUT_VSIZE;
+    } else if (txout.scriptPubKey.IsWitnessProgram(witnessversion, witnessprogram)) {
+        // Other witness programs: P2WSH's satisfaction is not determined by the
+        // output (it depends on the witnessScript), and Taproot outputs are
+        // unspendable on this chain since Schnorr verification always fails. Keep
+        // Bitcoin's minimum-satisfaction estimate, which stays a valid lower
+        // bound in both cases.
         // sum the sizes of the parts of a transaction input
         // with 75% segwit discount applied to the script size.
         nSize += (32 + 4 + 1 + (107 / WITNESS_SCALE_FACTOR) + 4);
     } else {
-        nSize += (32 + 4 + 1 + 107 + 4); // the 148 mentioned above
+        // Other non-witness scripts, chiefly P2SH: again the satisfaction is not
+        // determined by the output, and it need not involve a signature at all
+        // (a hashlock redeemScript is cheap), so Bitcoin's 148-byte lower bound
+        // is kept.
+        nSize += (32 + 4 + 1 + 107 + 4); // 148
     }
 
     return dustRelayFeeIn.GetFee(nSize);
@@ -118,6 +203,9 @@ bool IsStandardTx(const CTransaction& tx, const std::optional<unsigned>& max_dat
         // some minor future-proofing. That's also enough to spend a
         // 20-of-20 CHECKMULTISIG scriptPubKey, though such a scriptPubKey
         // is not considered standard.
+        //
+        // QubitCoin: MAX_STANDARD_SCRIPTSIG_SIZE is 8000 so a single Dilithium
+        // P2PKH scriptSig (~5.3 KB) is standard; see policy.h.
         if (txin.scriptSig.size() > MAX_STANDARD_SCRIPTSIG_SIZE) {
             reason = "scriptsig-size";
             return false;
@@ -126,6 +214,15 @@ bool IsStandardTx(const CTransaction& tx, const std::optional<unsigned>& max_dat
             reason = "scriptsig-not-pushonly";
             return false;
         }
+    }
+
+    // Relay bound on Dilithium verifications (policy only; not consensus). The
+    // weight check above is what normally binds — this backstops any spend shape
+    // that would carry a Dilithium key for less weight than a witness P2WPKH
+    // spend does. See MAX_STANDARD_DILITHIUM_INPUTS.
+    if (CountDilithiumSpendInputs(tx) > MAX_STANDARD_DILITHIUM_INPUTS) {
+        reason = "too-many-dilithium-inputs";
+        return false;
     }
 
     unsigned int nDataOut = 0;

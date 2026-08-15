@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2021 The Bitcoin Core developers
+// Copyright (c) 2014-2021 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -30,6 +30,15 @@ public:
     std::string operator()(const PKHash& id) const
     {
         std::vector<unsigned char> data = m_params.Base58Prefix(CChainParams::PUBKEY_ADDRESS);
+        data.insert(data.end(), id.begin(), id.end());
+        return EncodeBase58Check(data);
+    }
+
+    std::string operator()(const DilithiumPKHash& id) const
+    {
+        // Same 20-byte Hash160 payload as PKHash, but a distinct version byte so
+        // the address is visibly a post-quantum (Dilithium) address.
+        std::vector<unsigned char> data = m_params.Base58Prefix(CChainParams::PUBKEY_ADDRESS_DILITHIUM);
         data.insert(data.end(), id.begin(), id.end());
         return EncodeBase58Check(data);
     }
@@ -87,39 +96,58 @@ CTxDestination DecodeDestination(const std::string& str, const CChainParams& par
     uint160 hash;
     error_str = "";
 
-    // Note this will be false if it is a valid Bech32 address for a different network
-    bool is_bech32 = (ToLower(str.substr(0, params.Bech32HRP().size())) == params.Bech32HRP());
+    const std::vector<unsigned char>& pubkey_prefix = params.Base58Prefix(CChainParams::PUBKEY_ADDRESS);
+    const std::vector<unsigned char>& script_prefix = params.Base58Prefix(CChainParams::SCRIPT_ADDRESS);
+    const std::vector<unsigned char>& dilithium_prefix = params.Base58Prefix(CChainParams::PUBKEY_ADDRESS_DILITHIUM);
 
-    if (!is_bech32 && DecodeBase58Check(str, data, 21)) {
+    // QubitCoin: which encoding a string uses is settled by decoding it, not by how
+    // it starts. Upstream tests the Bech32 HRP first, which is safe there because no
+    // Bitcoin base58 address can begin "bc"/"tb"; here it silently ate real
+    // addresses. Every mainnet Dilithium address begins 'Q' (version byte 58) and the
+    // HRP is "qc", so roughly one in thirty — those whose second character is 'c' —
+    // matched the HRP, skipped this branch, failed the Bech32 branch, and decoded to
+    // nothing: unpayable by every send path and reported invalid by validateaddress.
+    // Trying Base58Check first is unambiguous because it carries its own 4-byte
+    // checksum, which a Bech32 string cannot satisfy.
+    const bool base58_decoded = DecodeBase58Check(str, data, 21);
+    if (base58_decoded) {
         // base58-encoded Bitcoin addresses.
         // Public-key-hash-addresses have version 0 (or 111 testnet).
         // The data vector contains RIPEMD160(SHA256(pubkey)), where pubkey is the serialized public key.
-        const std::vector<unsigned char>& pubkey_prefix = params.Base58Prefix(CChainParams::PUBKEY_ADDRESS);
         if (data.size() == hash.size() + pubkey_prefix.size() && std::equal(pubkey_prefix.begin(), pubkey_prefix.end(), data.begin())) {
             std::copy(data.begin() + pubkey_prefix.size(), data.end(), hash.begin());
             return PKHash(hash);
         }
         // Script-hash-addresses have version 5 (or 196 testnet).
         // The data vector contains RIPEMD160(SHA256(cscript)), where cscript is the serialized redemption script.
-        const std::vector<unsigned char>& script_prefix = params.Base58Prefix(CChainParams::SCRIPT_ADDRESS);
         if (data.size() == hash.size() + script_prefix.size() && std::equal(script_prefix.begin(), script_prefix.end(), data.begin())) {
             std::copy(data.begin() + script_prefix.size(), data.end(), hash.begin());
             return ScriptHash(hash);
         }
-
-        // If the prefix of data matches either the script or pubkey prefix, the length must have been wrong
-        if ((data.size() >= script_prefix.size() &&
-                std::equal(script_prefix.begin(), script_prefix.end(), data.begin())) ||
-            (data.size() >= pubkey_prefix.size() &&
-                std::equal(pubkey_prefix.begin(), pubkey_prefix.end(), data.begin()))) {
-            error_str = "Invalid length for Base58 address (P2PKH or P2SH)";
-        } else {
-            error_str = "Invalid or unsupported Base58-encoded address.";
+        // QubitCoin post-quantum Dilithium P2PKH addresses. Same 20-byte Hash160
+        // payload as a normal P2PKH, distinguished only by the version byte.
+        if (data.size() == hash.size() + dilithium_prefix.size() && std::equal(dilithium_prefix.begin(), dilithium_prefix.end(), data.begin())) {
+            std::copy(data.begin() + dilithium_prefix.size(), data.end(), hash.begin());
+            return DilithiumPKHash(hash);
         }
-        return CNoDestination();
-    } else if (!is_bech32) {
-        // Try Base58 decoding without the checksum, using a much larger max length
-        if (!DecodeBase58(str, data, 100)) {
+    }
+
+    // Note this will be false if it is a valid Bech32 address for a different network
+    const bool is_bech32 = (ToLower(str.substr(0, params.Bech32HRP().size())) == params.Bech32HRP());
+
+    if (!is_bech32) {
+        if (base58_decoded) {
+            // If the prefix of data matches either the script or pubkey prefix, the length must have been wrong
+            if ((data.size() >= script_prefix.size() &&
+                    std::equal(script_prefix.begin(), script_prefix.end(), data.begin())) ||
+                (data.size() >= pubkey_prefix.size() &&
+                    std::equal(pubkey_prefix.begin(), pubkey_prefix.end(), data.begin()))) {
+                error_str = "Invalid length for Base58 address (P2PKH or P2SH)";
+            } else {
+                error_str = "Invalid or unsupported Base58-encoded address.";
+            }
+        } else if (!DecodeBase58(str, data, 100)) {
+            // Try Base58 decoding without the checksum, using a much larger max length
             error_str = "Invalid or unsupported Segwit (Bech32) or Base58 encoding.";
         } else {
             error_str = "Invalid checksum or length of Base58 address (P2PKH or P2SH)";

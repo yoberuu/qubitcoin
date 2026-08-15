@@ -149,3 +149,23 @@ dist/
 /guix-build-*
 
 /ci/scratch/
+src/qbitcoind
+src/qbitcoin-cli
+src/qbitcoin-wallet
+src/qbitcoin-tx
+src/qbitcoin-util
+src/qbitcoind
+src/qbitcoin-cli
+src/qbitcoin-wallet
+src/qbitcoin-tx
+src/qbitcoin-util
+
+# Build binaries — never commit these
+src/qbitcoind
+src/qbitcoin-cli
+src/qbitcoin-tx
+src/qbitcoin-wallet
+src/qbitcoin-util
+src/qt/qbitcoin-qt
+src/test/test_*
+*.o

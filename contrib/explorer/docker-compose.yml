@@ -1,0 +1,67 @@
+# QubitCoin block explorer (btc-rpc-explorer) — multi-network setup.
+#
+# Switch networks with Docker Compose profiles:
+#   docker compose --profile regtest up -d
+#   docker compose --profile testnet4 up -d
+#
+# Or use the helper script:
+#   ./scripts/explorer.sh testnet4 up
+
+name: qbtc-explorer
+
+x-explorer-base: &explorer-base
+  build:
+    context: .
+    dockerfile: Dockerfile
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  restart: unless-stopped
+
+services:
+  explorer-regtest:
+    <<: *explorer-base
+    profiles: ["regtest"]
+    container_name: qbtc-explorer-regtest
+    env_file:
+      - env/common.env
+      - env/regtest.env
+    ports:
+      - "${REGTEST_EXPLORER_PORT:-3002}:3002"
+    volumes:
+      - "${REGTEST_COOKIE_DIR:-${HOME}/.qubitcoin/regtest}:/cookie:ro"
+
+  explorer-testnet3:
+    <<: *explorer-base
+    profiles: ["testnet3"]
+    container_name: qbtc-explorer-testnet3
+    env_file:
+      - env/common.env
+      - env/testnet3.env
+    ports:
+      - "${TESTNET3_EXPLORER_PORT:-3003}:3002"
+    volumes:
+      - "${TESTNET3_COOKIE_DIR:-${HOME}/.qubitcoin/testnet3}:/cookie:ro"
+
+  explorer-testnet4:
+    <<: *explorer-base
+    profiles: ["testnet4"]
+    container_name: qbtc-explorer-testnet4
+    env_file:
+      - env/common.env
+      - env/testnet4.env
+    ports:
+      - "${TESTNET4_EXPLORER_PORT:-3004}:3002"
+    volumes:
+      - "${TESTNET4_COOKIE_DIR:-${HOME}/.qubitcoin/testnet4}:/cookie:ro"
+
+  explorer-mainnet:
+    <<: *explorer-base
+    profiles: ["mainnet"]
+    container_name: qbtc-explorer-mainnet
+    env_file:
+      - env/common.env
+      - env/mainnet.env
+    ports:
+      - "${MAINNET_EXPLORER_PORT:-3005}:3002"
+    volumes:
+      - "${MAINNET_COOKIE_DIR:-${HOME}/.qubitcoin}:/cookie:ro"

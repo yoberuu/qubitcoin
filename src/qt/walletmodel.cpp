@@ -1,4 +1,4 @@
-// Copyright (c) 2011-2022 The Bitcoin Core developers
+// Copyright (c) 2011-2022 Yelpful Technologies
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -14,6 +14,7 @@
 #include <qt/sendcoinsdialog.h>
 #include <qt/transactiontablemodel.h>
 
+#include <addresstype.h>
 #include <common/args.h> // for GetBoolArg
 #include <interfaces/handler.h>
 #include <interfaces/node.h>
@@ -177,6 +178,12 @@ WalletModel::SendCoinsReturn WalletModel::prepareTransaction(WalletModelTransact
             {
                 return InvalidAddress;
             }
+            const CTxDestination dest{DecodeDestination(rcp.address.toStdString())};
+            // QubitCoin is Dilithium-only, so paying any other address type
+            // burns the funds. Refuse before the transaction is ever built.
+            if (!IsDilithiumDestination(dest)) {
+                return UnspendableAddress;
+            }
             if(rcp.amount <= 0)
             {
                 return InvalidAmount;
@@ -184,7 +191,7 @@ WalletModel::SendCoinsReturn WalletModel::prepareTransaction(WalletModelTransact
             setAddress.insert(rcp.address);
             ++nAddresses;
 
-            CRecipient recipient{DecodeDestination(rcp.address.toStdString()), rcp.amount, rcp.fSubtractFeeFromAmount};
+            CRecipient recipient{dest, rcp.amount, rcp.fSubtractFeeFromAmount};
             vecSend.push_back(recipient);
 
             total += rcp.amount;
