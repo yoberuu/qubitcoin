@@ -34,6 +34,9 @@ Read this before using mainnet
 > Treat mainnet as a public experiment that happens to be running for real, with
 > real block times and a real difficulty adjustment — not as a store of value.
 
+**New here?** Copy-paste build, join, wallet, VPS, and mining steps:
+**[doc/QUBITBIBLE.md](doc/QUBITBIBLE.md)**.
+
 What QubitCoin is
 -----------------
 
@@ -96,6 +99,40 @@ has run `bitcoind` will feel at home.
 | Consensus | BIP34/65/66/CSV at height 1, segwit at height 0, Taproot always active |
 | Assumed-valid / min chain work | zeroed — every block is fully verified |
 | Checkpoints | genesis only |
+| Public seed nodes | `137.184.152.223:2096`, `68.183.115.209:2096` (addnode; see below) |
+
+Public mainnet seeds
+--------------------
+
+Mainnet still has **no DNS seeds and no compiled-in fixed seeds** in the binary,
+so a fresh node will not find peers on its own. These public nodes listen on the
+mainnet P2P port (**2096**) and are the supported way to join:
+
+| Seed | P2P |
+|------|-----|
+| `137.184.152.223` | **2096** |
+| `68.183.115.209` | **2096** |
+
+```bash
+# While the node is running
+./src/qbitcoin-cli addnode "137.184.152.223:2096" "add"
+./src/qbitcoin-cli addnode "68.183.115.209:2096" "add"
+
+# Or on startup
+./src/qbitcoind -daemon \
+  -addnode=137.184.152.223:2096 \
+  -addnode=68.183.115.209:2096
+```
+
+In `~/.qubitcoin/qubitcoin.conf`:
+
+```ini
+addnode=137.184.152.223:2096
+addnode=68.183.115.209:2096
+```
+
+If `getconnectioncount` stays at 0, see
+[Troubleshooting](doc/QUBITBIBLE.md#troubleshooting) in the QubitBible.
 
 Known limitations
 -----------------
@@ -151,9 +188,10 @@ These are real properties of the current code, not a roadmap. Plan around them.
   encodings are valid. On a Dilithium-only chain they are not, so those vectors
   fail. The failures are catalogued in the audit document; the Dilithium-specific
   suites are the ones that must pass.
-- **Peer discovery is not deployed on mainnet yet.** There are no DNS seeds and
-  no compiled-in fixed seeds for mainnet, so a new node finds no peers on its
-  own. Use `-addnode`/`-connect` until seed infrastructure is live.
+- **Mainnet has no DNS seeds and no compiled-in fixed seeds.** A new node will
+  not discover peers by itself. Add the [public seed nodes](#public-mainnet-seeds)
+  with `-addnode` (P2P port **2096**). Testnet3/testnet4 already have live fixed
+  seeds; see [doc/testnet.md](doc/testnet.md).
 
 Safety features already implemented
 -----------------------------------
@@ -225,22 +263,30 @@ the rest of the dependency list.
 
 ### Mainnet
 
-```bash
-./src/qbitcoind -daemon
-./src/qbitcoin-cli getblockchaininfo
+Full walkthrough (Ubuntu build, VPS/systemd, mining, troubleshooting):
+**[doc/QUBITBIBLE.md](doc/QUBITBIBLE.md)**.
 
-# Peer discovery is not deployed yet — add a known peer explicitly:
-./src/qbitcoin-cli addnode "PEER_IP:2096" "add"
+```bash
+./src/qbitcoind -daemon \
+  -addnode=137.184.152.223:2096 \
+  -addnode=68.183.115.209:2096
+./src/qbitcoin-cli getblockchaininfo
+# chain should be "main"; genesis
+# 000000002f4fcc60ef61353d1767c691562dd380f240c1fcf47bf0e1c655d011
+
+./src/qbitcoin-cli getconnectioncount   # wait until > 0
 ./src/qbitcoin-cli getpeerinfo
 
-# Wallet
+# Wallet — Dilithium only. Do not create a descriptor wallet.
 ./src/qbitcoin-cli createwallet mywallet
 ./src/qbitcoin-cli -rpcwallet=mywallet getnewaddress   # returns a Q… address
 ./src/qbitcoin-cli -rpcwallet=mywallet backupwallet ~/qbtc-wallet.bak
 ```
 
 Re-read the [warning above](#read-this-before-using-mainnet) before you put
-anything you care about on this chain.
+anything you care about on this chain. The wallet file is the only backup:
+there is no seed phrase. See
+[doc/qubitcoin-recovery.md](doc/qubitcoin-recovery.md).
 
 ### Regtest (local dev — instant blocks, no peers needed)
 
@@ -303,6 +349,7 @@ Documentation
 
 | Doc | Contents |
 |-----|----------|
+| [doc/QUBITBIBLE.md](doc/QUBITBIBLE.md) | Build, join mainnet, wallet, VPS/systemd, solo mining |
 | [doc/qubitcoin-recovery.md](doc/qubitcoin-recovery.md) | Wallet backup, key derivation, recovery |
 | [doc/dilithium-crypto-audit.md](doc/dilithium-crypto-audit.md) | Internal Dilithium crypto & consensus audit |
 | [doc/testnet.md](doc/testnet.md) | Node operator guide, command reference, limitations |

@@ -4,16 +4,19 @@ This guide covers running a node on mainnet, testnet, or local regtest, and the
 RPC commands you'll actually use. If you've run `bitcoind` before, you're 90%
 of the way there — the binaries are just named `qbitcoind` and `qbitcoin-cli`.
 
+New operators who want copy-paste Ubuntu / VPS / mining steps should start with
+the **[QubitBible](QUBITBIBLE.md)**. This page is the command reference.
+
 > **Mainnet is experimental.** There has been no professional third-party audit,
 > only the internal review in [dilithium-crypto-audit.md](dilithium-crypto-audit.md).
 > Bugs are still possible, and consensus or wallet changes may still be needed.
 > Do not store significant value on this chain. See the
 > [README](../README.md#read-this-before-using-mainnet) for the full warning.
 
-**Status:** Mainnet chain parameters are locked, but seed infrastructure is not
-deployed: mainnet has no DNS seeds and no compiled-in fixed seeds, so peers must
-be supplied with `-addnode`. Testnet3/testnet4 have live fixed seeds. The faucet
-and public block explorer are still being finalized.
+**Status:** Mainnet chain parameters are locked. DNS seeds and compiled-in
+fixed seeds are still not in the binary; join with `-addnode` to the
+[public seed nodes](#bootstrap--connecting-to-peers). Testnet3/testnet4 have
+live fixed seeds. The faucet and public block explorer are still being finalized.
 
 ---
 
@@ -47,7 +50,7 @@ and public block explorer are still being finalized.
 | Data directory | `~/.qubitcoin/` |
 | Block subsidy | 500 QBTC, halving every 210,000 blocks (210,000,000 QBTC total) |
 | Target spacing | 10 minutes, retarget every 2016 blocks |
-| Peer discovery | **none deployed yet** — use `-addnode` |
+| Peer discovery | **no DNS / compiled-in seeds** — use public addnode seeds below |
 
 ### Testnet4 — recommended testnet (`-testnet4`)
 
@@ -104,15 +107,17 @@ Fresh Dilithium-only chains with modern rules from genesis:
 
 ```bash
 # 1. Start the node (mainnet is the default chain — no flag needed)
-qbitcoind -daemon
+qbitcoind -daemon \
+  -addnode=137.184.152.223:2096 \
+  -addnode=68.183.115.209:2096
 
 # 2. Confirm you're on the right chain
 qbitcoin-cli getblockchaininfo
 # chain should be "main"; the genesis hash is
 # 000000002f4fcc60ef61353d1767c691562dd380f240c1fcf47bf0e1c655d011
 
-# 3. Add peers by hand — mainnet has no DNS or fixed seeds yet
-qbitcoin-cli addnode "PEER_IP:2096" "add"
+# 3. Confirm peers (mainnet has no DNS or compiled-in seeds)
+qbitcoin-cli getconnectioncount
 qbitcoin-cli getpeerinfo
 
 # 4. Create a wallet and back it up immediately
@@ -199,18 +204,19 @@ qbitcoin-cli -regtest stop
 ### Automatic peer discovery
 
 By default, `qbitcoind` uses DNS seeds and fixed seeds to find peers. On
-QubitCoin only the testnets have them so far:
+QubitCoin only the testnets have those compiled in. Mainnet operators add the
+public seed nodes by hand:
 
 | Network  | Seed nodes |
 |----------|------------|
-| mainnet  | **none deployed** — supply peers with `-addnode` or `-connect` |
+| mainnet  | **addnode** `137.184.152.223:2096`, `68.183.115.209:2096` (no DNS / compiled-in seeds) |
 | testnet3 | `142.93.6.69:12096`, `142.93.12.49:12096` |
 | testnet4 | `142.93.6.69:42096`, `142.93.12.49:42096` |
 
 On the testnets, new nodes should connect automatically after startup. On mainnet
 a fresh node will sit at zero connections until you give it a peer, because
-`vSeeds` and `vFixedSeeds` are both empty for `main` in
-`src/kernel/chainparams.cpp`. Use `-addnode` (manual section below).
+`vSeeds` and `vFixedSeeds` are both empty for `main`. Use `-addnode` (below) or
+see the [QubitBible](QUBITBIBLE.md#join-mainnet).
 
 ### Manual peer connection
 
@@ -218,11 +224,19 @@ If you know a peer's IP or hostname:
 
 ```bash
 # On startup
-qbitcoind -testnet4 -addnode=PEER_IP:42096 -daemon
+qbitcoind -addnode=137.184.152.223:2096 -addnode=68.183.115.209:2096 -daemon
 
 # Or while running
+qbitcoin-cli addnode "137.184.152.223:2096" "add"
+qbitcoin-cli addnode "68.183.115.209:2096" "add"
+qbitcoin-cli getpeerinfo
+```
+
+Testnet example:
+
+```bash
+qbitcoind -testnet4 -addnode=PEER_IP:42096 -daemon
 qbitcoin-cli -testnet4 addnode "PEER_IP:42096" "add"
-qbitcoin-cli -testnet4 getpeerinfo
 ```
 
 ### Configuration file
@@ -231,6 +245,9 @@ Copy [share/examples/qubitcoin.conf](../share/examples/qubitcoin.conf) to your
 data directory and uncomment network-specific options:
 
 ```ini
+addnode=137.184.152.223:2096
+addnode=68.183.115.209:2096
+
 [testnet4]
 testnet4=1
 # addnode=seed.example.com:42096
@@ -515,7 +532,7 @@ plan around:
 | **No key export/import** | No `dumpprivkey`, no key import, and `dumpwallet` writes a keyless file. Back up the wallet file: [qubitcoin-recovery.md](qubitcoin-recovery.md). |
 | **ECDSA disabled** | There is no ECDSA on this chain. Legacy Bitcoin addresses and scripts are not valid for spending. Paying one would burn the coins, so the wallet refuses: every send RPC and the GUI reject any destination that is not a Dilithium address, and `validateaddress` reports `ispostquantum: false` plus a warning for the rest. |
 | **Upstream test vectors fail by design** | Bitcoin Core's script and key corpora assert that ECDSA signatures and legacy key encodings are valid; on a Dilithium-only chain they aren't. The Dilithium suites are the ones that must pass. |
-| **Peer discovery** | Mainnet has **no** DNS or fixed seeds yet — use `-addnode`. Testnet3/testnet4 fixed seeds are live (see bootstrap section). |
+| **Peer discovery** | Mainnet has **no** DNS or compiled-in seeds — add `137.184.152.223:2096` and `68.183.115.209:2096`. Testnet3/testnet4 fixed seeds are live (see bootstrap section). |
 | **No faucet yet** | Testnet coins require mining or a friendly peer until the faucet launches. |
 
 ---
@@ -547,6 +564,7 @@ patched.
 
 ## See also
 
+- [QUBITBIBLE.md](QUBITBIBLE.md) — build, join mainnet, VPS/systemd, solo mining
 - [qubitcoin-recovery.md](qubitcoin-recovery.md) — wallet backup, key derivation, recovery
 - [dilithium-crypto-audit.md](dilithium-crypto-audit.md) — internal Dilithium crypto & consensus audit
 - [contrib/explorer/README.md](../contrib/explorer/README.md) — Docker block explorer (btc-rpc-explorer)
